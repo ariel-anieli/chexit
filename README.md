@@ -3,7 +3,7 @@ Using a FortiGate configuration, checks a policy, and exits it in CSV.
 
 ## Either by VDOM and policy ID, spaced by columns
 ```
-chexit -c CONFIGURATION -vp VDOM,POLID_1[:VDOM,POLID_2]
+chexit -c CONFIGURATION -vp VDOM_1,POLID_1[:VDOM_2,POLID_2]
 
 id|uuid|srcintf|dstintf|srcaddr|dstaddr|service
 ```
