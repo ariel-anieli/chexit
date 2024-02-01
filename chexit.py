@@ -1,13 +1,10 @@
-'''Using a FortiGate configuration, checks a policy, and exits it in CSV.'''
-
 import argparse
 import functools
 import logging
 import itertools
+import json
 import re
 import sys
-
-from typing import List
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-c',  '--config')
@@ -34,51 +31,46 @@ else:
 def pipe(args, *funcs):
     return functools.reduce(lambda arg, func: func(arg), funcs, args)
 
-def tell_accepted_types():
-    return ['UUID', 'VDOM-AND-POLID']
-    
-
 def look_up_all_keys_of_type_into(cfg, key_type, key_list, list_sep=':'):
 
-    def build_csv_row(trimmed):
-        return '|'.join(trimmed)
-
     def search_by_uuid(state, line):
-        in_ = re.sub('\n', '|', line)
-        if re.match("^\s*edit\s\d+", in_):
-            state['search'] = in_
-        elif re.match("^\s*next", in_) \
-             and re.search(state['keys'], state['search']):
-            state['found'] = ''.join([state['search'], in_])
+        entry = re.sub('\n', '|', line)
+        start = "^\s*edit\s\d+"
+        end   = "^\s*next"
+
+        if re.match(start, entry):
+            state['search'] = entry
+        elif re.match(end, entry) and re.search(state['keys'], state['search']):
+            state['found'] = ''.join([state['search'], entry])
             logging.debug('Found {}'.format(state['keys']))
         else:
-            state['search'] = ''.join([state['search'], in_])
+            state['search'] = ''.join([state['search'], entry])
 
         return state
 
     def search_by_v_polid(state, line):
-        in_    = re.sub('\n', '|', line)
+        entry    = re.sub('\n', '|', line)
         pol_id = state['keys'].split(',')[1]
         vdom   = state['keys'].split(',')[0]
 
-        if re.match("^\s*config global", in_):
+        if re.match("^\s*config global", entry):
             state['flag'] = 'Waiting VDOM'
-        elif re.match("^\s*edit\s" + vdom, in_) \
+        elif re.match("^\s*edit\s" + vdom, entry) \
              and state['flag']=='Waiting VDOM':
             state['flag'] = 'In VDOM'
-        elif re.match("^\s*config firewall policy", in_) \
+        elif re.match("^\s*config firewall policy", entry) \
              and state['flag']=='In VDOM':
             state['flag'] = 'In policies'
-        elif re.match("^\s*edit\s{}[^\d]".format(pol_id), in_) \
+        elif re.match("^\s*edit\s{}[^\d]".format(pol_id), entry) \
              and state['flag']=='In policies':
-            state['search'] = in_
-        elif re.match("^\s*next", in_) \
+            state['search'] = entry
+        elif re.match("^\s*next", entry) \
              and re.search(pol_id, state['search']):
-            state['found'] = ''.join([state['search'], in_])
+            state['found'] = ''.join([state['search'], entry])
             dbg = 'Found ID {} in VDOM {}'.format(pol_id, vdom)
             logging.debug(dbg)
         elif state['search'] and state['flag']=='In policies':
-            state['search'] = ''.join([state['search'], in_])
+            state['search'] = ''.join([state['search'], entry])
 
         return state
 
@@ -104,21 +96,33 @@ def look_up_all_keys_of_type_into(cfg, key_type, key_list, list_sep=':'):
             lambda findings: list(findings).pop()['found']
         )
 
-    def trim_keys(trim_prfx):
+    def trim_keys(found):
+        head  = lambda items: items[0]
+        tail  = lambda items: items[1:]
+        split = lambda item: re.split(' ', item)
 
-        return [re.sub('^\w+ ', '', FLD)
-                for FLD in trim_prfx.split('|')
-                if re.match('^(uuid|src|dst|service|\d+)', FLD)
-                and not re.match('^\w+\-', FLD)]
+        def fill(info, field):
+            if not re.match('^(id|logtraffic|uuid|comments)', field):
+                return info | {head(split(field)) : tail(split(field))}
+            else:
+                match = re.search('^(\w+) (.*)$', field)
+                key   = match.group(1)
+                value = match.group(2) if key!='id' else int(match.group(2))
+
+                return info | {key : value}
+
+        return functools.reduce(fill, found.split('|'), {})
 
     def trim_prfx(found):
-        trim   = lambda STR, RGX: re.sub(RGX[0], RGX[1], STR)
-        keyset = [
-            ('^\s+edit\s(?=\w+)', ''),
-            ('(?<=\|)\s+set\s',   '')
+        trimmer = lambda STR, RGX: re.sub(RGX[0], RGX[1], STR)
+        keyset  = [
+            ('^\s+edit\s(?=\w+)', 'id '),
+            ('(?<=\|)\s+set\s',   ''),
+            ('\|\s+next.*$', ''),
+            ('"', '')
         ]
 
-        return functools.reduce(trim, keyset, found)
+        return functools.reduce(trimmer, keyset, found)
 
     keys = key_list.split(list_sep)
     logging.debug('Number of input, {}: {}'.format(len(keys), keys))
@@ -129,7 +133,7 @@ def look_up_all_keys_of_type_into(cfg, key_type, key_list, list_sep=':'):
             look_up_each_key_of_type_into,
             trim_prfx,
             trim_keys,
-            build_csv_row,
+            json.dumps,
             logging.info
         )
 
@@ -148,18 +152,6 @@ if __name__ == "__main__":
     elif args.v_polid:
         key_type  = 'VDOM-AND-POLID'
         key_value = args.v_polid
-
-    HEAD = '|'.join(
-        ['id',
-         'uuid',
-         'srcintf',
-         'dstintf',
-         'srcaddr',
-         'dstaddr',
-         'service']
-    )
-
-    logging.info(HEAD)
 
     look_up_all_keys_of_type_into(
         args.config,
