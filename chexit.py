@@ -34,20 +34,16 @@ else:
 def pipe(args, *funcs):
     return functools.reduce(lambda arg, func: func(arg), funcs, args)
 
-def tell_accepted_types() -> List[str]:
+def tell_accepted_types():
     return ['UUID', 'VDOM-AND-POLID']
     
 
-def look_up_all_keys_of_type_into(
-        cfg      : str,
-        key_type : str,
-        key_list : str,
-        list_sep = ':') -> str:
+def look_up_all_keys_of_type_into(cfg, key_type, key_list, list_sep=':'):
 
-    def build_csv_row(trimmed: List[str]) -> str:
+    def build_csv_row(trimmed):
         return '|'.join(trimmed)
 
-    def search_by_uuid(state: dict, line: str) -> dict:
+    def search_by_uuid(state, line):
         in_ = re.sub('\n', '|', line)
         if re.match("^\s*edit\s\d+", in_):
             state['search'] = in_
@@ -60,7 +56,7 @@ def look_up_all_keys_of_type_into(
 
         return state
 
-    def search_by_v_polid(state: dict, line: str) -> dict:
+    def search_by_v_polid(state, line):
         in_    = re.sub('\n', '|', line)
         pol_id = state['keys'].split(',')[1]
         vdom   = state['keys'].split(',')[0]
@@ -108,28 +104,36 @@ def look_up_all_keys_of_type_into(
             lambda findings: list(findings).pop()['found']
         )
 
-    def trim_keys(trim_prfx: str) -> str:
+    def trim_keys(trim_prfx):
 
         return [re.sub('^\w+ ', '', FLD)
                 for FLD in trim_prfx.split('|')
                 if re.match('^(uuid|src|dst|service|\d+)', FLD)
                 and not re.match('^\w+\-', FLD)]
 
-    def trim_prfx(found: str) -> str:
-        return functools.reduce(lambda STR, RGX: re.sub(RGX[0], RGX[1], STR),
-                                [('^\s+edit\s(?=\w+)', ''),
-                                 ('(?<=\|)\s+set\s',   '')], found)
+    def trim_prfx(found):
+        trim   = lambda STR, RGX: re.sub(RGX[0], RGX[1], STR)
+        keyset = [
+            ('^\s+edit\s(?=\w+)', ''),
+            ('(?<=\|)\s+set\s',   '')
+        ]
+
+        return functools.reduce(trim, keyset, found)
 
     keys = key_list.split(list_sep)
     logging.debug('Number of input, {}: {}'.format(len(keys), keys))
 
-    [functools.reduce(lambda _IN, FUNC: FUNC(_IN),
-                      [look_up_each_key_of_type_into,
-                       trim_prfx,
-                       trim_keys,
-                       build_csv_row,
-                       logging.info],
-                      OBJ) for OBJ in keys]
+    def pipe_flow(key):
+        return pipe(
+            key,
+            look_up_each_key_of_type_into,
+            trim_prfx,
+            trim_keys,
+            build_csv_row,
+            logging.info
+        )
+
+    [pipe_flow(key) for key in keys]
 
 if __name__ == "__main__":
 
