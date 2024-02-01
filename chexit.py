@@ -31,6 +31,9 @@ else:
     logging.basicConfig(filename=args.output, filemode='w',
                         format=FORMAT,        level=LEVEL)
 
+def pipe(args, *funcs):
+    return functools.reduce(lambda arg, func: func(arg), funcs, args)
+
 def tell_accepted_types() -> List[str]:
     return ['UUID', 'VDOM-AND-POLID']
     
@@ -83,26 +86,27 @@ def look_up_all_keys_of_type_into(
 
         return state
 
-    def look_up_each_key_of_type_into(key: str) -> str:
+    def look_up_each_key_of_type_into(key):
+        init      = {'found'  : '',
+                     'search' : '',
+                     'keys'   : key,
+                     'flag'   : ''}
 
-        init = {'found'  : '',
-                'search' : '',
-                'keys'   : key,
-                'flag'   : ''}
-
-        search_by = search_by_uuid if key_type=='UUID' \
-            else search_by_v_polid if key_type=='VDOM-AND-POLID' \
-            else None
+        search_by = lambda: {
+            'UUID'           : search_by_uuid,
+            'VDOM-AND-POLID' : search_by_v_polid
+        }[key_type]
 
         logging.debug('Looking up {}'.format(key))
 
         with open(cfg) as conf:
             full_cfg = conf.readlines()
 
-            return list(itertools.takewhile(lambda x: not x['found'],
-                                            itertools.accumulate(full_cfg,
-                                                                 search_by,
-                                                                 initial=init))).pop()['found']
+        return pipe(
+            itertools.accumulate(full_cfg, search_by(), initial=init),
+            lambda search: itertools.takewhile(lambda x: not x['found'], search),
+            lambda findings: list(findings).pop()['found']
+        )
 
     def trim_keys(trim_prfx: str) -> str:
 
