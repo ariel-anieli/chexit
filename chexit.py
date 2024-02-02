@@ -10,6 +10,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-c',  '--config')
 parser.add_argument('-o',  '--output', default=sys.stdout)
 parser.add_argument('-v',  '--verbose', action='count', default=0)
+parser.add_argument('-f',  '--formatter', choices=['json', 'csv'], default='json')
 group = parser.add_mutually_exclusive_group()
 group.add_argument('-u',  '--uuid',    help='uuid1[:uuid2...]')
 group.add_argument('-vp', '--v_polid', help='vdom1,polID1[:vdom2,polID2...]')
@@ -124,8 +125,6 @@ def lookup_keys(config_name, _type, key_list, list_sep=':'):
             lookup_key(config_name, key, search_by),
             trim_prfx,
             trim_keys,
-            json.dumps,
-            logging.info
         )
 
     def search_by():
@@ -138,6 +137,13 @@ def lookup_keys(config_name, _type, key_list, list_sep=':'):
     logging.debug('Number of input, {}: {}'.format(len(keys), keys))
 
     return [pipe_flow(key) for key in keys]
+
+def format_output(output, formatter):
+    return  pipe(
+        output,
+        json.dumps,
+        logging.info
+    )
 
 if __name__ == "__main__":
 
@@ -153,4 +159,7 @@ if __name__ == "__main__":
         _type = 'VDOM-AND-POLID'
         keys  = args.v_polid
 
-    lookup_keys(args.config, _type, keys)
+    pipe(
+        lookup_keys(args.config, _type, keys),
+        lambda output: format_output(output, args.formatter)
+    )
