@@ -1,9 +1,9 @@
 # chexit
-Using a FortiGate configuration, checks a policy, and exits it in JSON.
+Using a FortiGate configuration, checks a policy, and exits it in JSON or CSV.
 
 ## Either by VDOM and policy ID, spaced by columns
 ```
-chexit -c CONFIGURATION -vp VDOM_1,POLID_1[:VDOM_2,POLID_2] | jq --slurp '.[0] | map_values(type)'
+chexit -c CONFIGURATION -vp VDOM_1,POLID_1[:VDOM_2,POLID_2] -f json | jq --slurp '.[0] | map_values(type)'
 {
   "id": "number",
   "uuid": "string",
