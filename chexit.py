@@ -138,7 +138,7 @@ def lookup_keys(config_name, _type, key_list, list_sep=':'):
 
     return [pipe_flow(key) for key in keys]
 
-def format_output(entries, formatter):
+def format_output(entries, formatter, line_sep=';'):
     def dict_to_string(line, item):
         key, value = item
 
@@ -146,11 +146,11 @@ def format_output(entries, formatter):
             case 'id':
                 return str(value)
             case 'name' | 'uuid' | 'action' | 'logtraffic':
-                return ';'.join([line, value])
+                return line_sep.join([line, value])
             case 'srcintf' | 'dstintf' | 'srcaddr' | 'dstaddr' | \
                  'schedule' | 'service':
                 joinedvalues = ','.join(value)
-                return ';'.join([line, joinedvalues])
+                return line_sep.join([line, joinedvalues])
 
     match formatter:
         case "json":
@@ -162,8 +162,8 @@ def format_output(entries, formatter):
         case "csv":
             rows   = [functools.reduce(dict_to_string, entry.items(), '')
                       for entry in entries]
-            head   = ';'.join(entries.pop(0).keys())
-            output = [head] + rows
+            head   = line_sep.join(entries.pop(0).keys())
+            output = ['sep=' + line_sep] + [head] + rows
             return pipe(
                 '\n'.join(output),
                 logging.info
