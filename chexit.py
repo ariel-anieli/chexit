@@ -160,11 +160,12 @@ def format_output(entries, formatter):
                 logging.info
             )
         case "csv":
-            rows = [functools.reduce(dict_to_string, entry.items(), '')
-                    for entry in entries]
-            head = ';'.join(entries.pop(0).keys())
+            rows   = [functools.reduce(dict_to_string, entry.items(), '')
+                      for entry in entries]
+            head   = ';'.join(entries.pop(0).keys())
+            output = [head] + rows
             return pipe(
-                '\n'.join([head, '\n'.join(rows)]),
+                '\n'.join(output),
                 logging.info
             )
 
