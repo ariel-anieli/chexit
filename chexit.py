@@ -79,7 +79,7 @@ def trim_keys(found):
     split = lambda item: re.split(' ', item)
 
     def fill(info, field):
-        if not re.match('^(id|logtraffic|uuid|comments)', field):
+        if not re.match('^(id|name|action|logtraffic|uuid|comments)', field):
             key   = head(split(field))
             value = tail(split(field))
         else:
@@ -138,12 +138,35 @@ def lookup_keys(config_name, _type, key_list, list_sep=':'):
 
     return [pipe_flow(key) for key in keys]
 
-def format_output(output, formatter):
-    return  pipe(
-        output,
-        json.dumps,
-        logging.info
-    )
+def format_output(entries, formatter):
+    def dict_to_string(line, item):
+        key, value = item
+
+        match key:
+            case 'id':
+                return str(value)
+            case 'name' | 'uuid' | 'action' | 'logtraffic':
+                return ';'.join([line, value])
+            case 'srcintf' | 'dstintf' | 'srcaddr' | 'dstaddr' | \
+                 'schedule' | 'service':
+                joinedvalues = ','.join(value)
+                return ';'.join([line, joinedvalues])
+
+    match formatter:
+        case "json":
+            return  pipe(
+                entries,
+                json.dumps,
+                logging.info
+            )
+        case "csv":
+            rows = [functools.reduce(dict_to_string, entry.items(), '')
+                    for entry in entries]
+            head = ';'.join(entries.pop(0).keys())
+            return pipe(
+                '\n'.join([head, '\n'.join(rows)]),
+                logging.info
+            )
 
 if __name__ == "__main__":
 
