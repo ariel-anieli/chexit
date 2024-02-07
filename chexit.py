@@ -145,7 +145,7 @@ def format_output(entries, formatter, line_sep=';'):
         match key:
             case 'id':
                 return str(value)
-            case 'name' | 'uuid' | 'action' | 'logtraffic':
+            case 'name' | 'uuid' | 'action' | 'logtraffic' | 'comments':
                 return line_sep.join([line, value])
             case 'srcintf' | 'dstintf' | 'srcaddr' | 'dstaddr' | \
                  'schedule' | 'service':
@@ -164,6 +164,7 @@ def format_output(entries, formatter, line_sep=';'):
                       for entry in entries]
             head   = line_sep.join(entries.pop(0).keys())
             output = ['sep=' + line_sep] + [head] + rows
+
             return pipe(
                 '\n'.join(output),
                 logging.info
