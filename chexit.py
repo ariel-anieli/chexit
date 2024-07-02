@@ -29,6 +29,9 @@ else:
     logging.basicConfig(filename=args.output, filemode='w',
                         format=FORMAT,        level=LEVEL)
 
+def is_match (_match):
+    return isinstance(_match, re.Match)
+
 def pipe(args, *funcs):
     return functools.reduce(lambda arg, func: func(arg), funcs, args)
 
@@ -37,7 +40,6 @@ def search_by_uuid(state, line):
     start = "^\s*edit\s\d+"
     end   = "^\s*next"
 
-    is_match = lambda _match: isinstance(_match, re.Match)
     is_start = lambda: is_match(re.match(start, entry))
     is_end   = lambda: is_match(re.match(end, entry))
     is_found = lambda: is_match(re.search(state['keys'], state['search']))
@@ -58,15 +60,19 @@ def search_by_v_polid(state, line):
     pol_id = state['keys'].split(',')[1]
     vdom   = state['keys'].split(',')[0]
 
-    if re.match("^\s*config global", entry):
-        state['flag'] = 'Waiting VDOM'
-    elif re.match("^\s*edit\s" + vdom, entry) \
-         and state['flag']=='Waiting VDOM':
-        state['flag'] = 'In VDOM'
-    elif re.match("^\s*config firewall policy", entry) \
-         and state['flag']=='In VDOM':
-        state['flag'] = 'In policies'
-    elif re.match("^\s*edit\s{}[^\d]".format(pol_id), entry) \
+    in_global   = lambda: is_match(re.match("^\s*config global", entry))
+    in_vdom     = lambda: is_match(re.match("^\s*edit\s" + vdom, entry))
+    in_policy   = lambda: is_match(re.match("^\s*edit\s{}[^\d]".format(pol_id), entry))
+    in_policies = lambda: is_match(re.match("^\s*config firewall policy", entry))
+
+    state['flag'] = {
+        ''             : 'Waiting VDOM' if in_global()   else '',
+        'Waiting VDOM' : 'In VDOM'      if in_vdom()     else state['flag'],
+        'In VDOM'      : 'In policies'  if in_policies() else state['flag'],
+        'In policies'  : state['flag']
+    }[state.get('flag', '')]
+
+    if re.match("^\s*edit\s{}[^\d]".format(pol_id), entry) \
          and state['flag']=='In policies':
         state['search'] = entry
     elif re.match("^\s*next", entry) \
