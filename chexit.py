@@ -1,6 +1,7 @@
 import argparse
 import functools
 import logging
+import ipaddress
 import itertools
 import json
 import re
@@ -10,6 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-c',  '--config')
 parser.add_argument('-o',  '--output', default=sys.stdout)
 parser.add_argument('-v',  '--verbose', action='count', default=0)
+parser.add_argument('-e',  '--expand', choices=['addr', 'none'], default='addr')
 parser.add_argument('-f',  '--formatter', choices=['json', 'csv'], default='json')
 group = parser.add_mutually_exclusive_group()
 group.add_argument('-u',  '--uuid',    help='uuid1[:uuid2...]')
@@ -85,6 +87,28 @@ def search_by_v_polid(state, line):
 
     return state
 
+def search_addr_grp(state, line):
+    entry = re.sub('\n', '|', line)
+
+    is_subnet  = lambda: is_match(re.search("set subnet (.*)\|$", state['search']))
+    is_addrgrp = lambda: is_match(re.search("set member (.*)\|$", state['search']))
+
+    if re.search('edit "{}"'.format(state["key"]), entry):
+        state['search'] = entry
+        state['flag'] = 'In address group'
+    elif re.search("\s*next", entry) and state['flag']=="In address group":
+        match (is_subnet(), is_addrgrp()):
+            case (True, _):
+                match_ = re.search("set subnet (.*)\|$", state['search'])
+                state['found'] = {'subnet' : match_.group(1)}
+            case (_, True):
+                match_ = re.search("set member (.*)\|$", state['search'])
+                state['found'] = {'member' : match_.group(1)}
+    else:
+        state['search'] = ''.join([state['search'], entry])
+
+    return state
+
 def trim_keys(found):
     head  = lambda items: items[0]
     tail  = lambda items: items[1:]
@@ -115,7 +139,7 @@ def trim_prfx(found):
     return functools.reduce(trimmer, keyset, found)
 
 def lookup_key(config_name, key, search_by):
-    init      = {
+    init = {
         'found'  : '',
         'search' : '',
         'keys'   : key,
@@ -131,12 +155,77 @@ def lookup_key(config_name, key, search_by):
             lambda findings: list(findings).pop()['found']
         )
 
+def add_addr_grp_to_search_or_get_subnet(init, addr):
+    addrs, subnets = init
+    init_srch = {
+        'found'  : '',
+        'search' : '',
+        'key'    : addrs.pop(0),
+        'flag'   : ''
+    }
+
+    with open(args.config) as config:
+        temp = pipe(
+            itertools.accumulate(config, search_addr_grp, initial=init_srch),
+            lambda srch: itertools.takewhile(lambda o: not o['found'], srch),
+            lambda findings: list(findings).pop()['found']
+        )
+
+    match temp:
+        case {'subnet' : subnet}:
+            ipv4_or_ipv6_subnet = ipaddress.ip_network(subnet.replace(" ", "/"))
+            subnets.append(str(ipv4_or_ipv6_subnet))
+        case {'member' : members}:
+            [addrs.append(member.strip('"')) for member in members.split(" ")]
+
+    return (addrs, subnets)
+
+def search_till_subnet_is_found(old_addr_queue, old_subnet_list):
+    match len(old_addr_queue):
+        case 0:
+            return old_subnet_list
+        case _:
+            length = range(len(old_addr_queue))
+            init   = (old_addr_queue, old_subnet_list)
+            new_addr_queue, new_subnet_list = functools.reduce(
+                add_addr_grp_to_search_or_get_subnet,
+                length,
+                init
+            )
+
+            return search_till_subnet_is_found(
+                new_addr_queue,
+                new_subnet_list
+            )
+
+def expand_subnet_from_addr_grp(output):
+    def cond(key):
+        return output.get(key) in ['all']
+
+    def if_addr_meets_cond_do_nothing(key):
+        return {
+            True  : output.get(key),
+            False : search_till_subnet_is_found(output.get(key), [])
+        }[cond(key)]
+
+    match args.expand:
+        case 'none':
+            expansion = {}
+        case 'addr':
+            expansion = {
+                'srcaddr' : if_addr_meets_cond_do_nothing('srcaddr'),
+                'dstaddr' : if_addr_meets_cond_do_nothing('dstaddr')
+            }
+
+    return output | expansion
+
 def lookup_keys(config_name, _type, key_list, list_sep=':'):
     def pipe_flow(key):
         return pipe(
             lookup_key(config_name, key, search_by),
             trim_prfx,
             trim_keys,
+            expand_subnet_from_addr_grp,
         )
 
     def search_by():
@@ -198,5 +287,5 @@ if __name__ == "__main__":
 
     pipe(
         lookup_keys(args.config, _type, keys),
-        lambda output: format_output(output, args.formatter)
+        lambda output: format_output(output, args.formatter),
     )
