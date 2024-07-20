@@ -93,7 +93,10 @@ def search_addr_grp(state, line):
     is_subnet  = lambda: is_match(re.search("set subnet (.*)\|$", state['search']))
     is_addrgrp = lambda: is_match(re.search("set member (.*)\|$", state['search']))
 
-    if re.search('edit "{}"'.format(state["key"]), entry):
+    if state["key"] == 'all':
+        state['found'] = {'subnet' : 'all'}
+        logging.debug("Found subnet {}".format(state['found']))
+    elif re.search('edit "{}"'.format(state["key"]), entry):
         state['search'] = entry
         state['flag'] = 'In address group'
     elif re.search("\s*next", entry) and state['flag']=="In address group":
@@ -101,9 +104,11 @@ def search_addr_grp(state, line):
             case (True, _):
                 match_ = re.search("set subnet (.*)\|$", state['search'])
                 state['found'] = {'subnet' : match_.group(1)}
+                logging.debug("{} : {}".format(state['key'], state['found']))
             case (_, True):
                 match_ = re.search("set member (.*)\|$", state['search'])
                 state['found'] = {'member' : match_.group(1)}
+                logging.debug("{} : {}".format(state['key'], state['found']))
     else:
         state['search'] = ''.join([state['search'], entry])
 
@@ -172,9 +177,11 @@ def add_addr_grp_to_search_or_get_subnet(init, addr):
         )
 
     match temp:
+        case {'subnet' : 'all'}:
+            subnets.append('all')
         case {'subnet' : subnet}:
-            ipv4_or_ipv6_subnet = ipaddress.ip_network(subnet.replace(" ", "/"))
-            subnets.append(str(ipv4_or_ipv6_subnet))
+            ip_subnet = ipaddress.ip_network(subnet.replace(" ", "/"))
+            subnets.append(str(ip_subnet))
         case {'member' : members}:
             [addrs.append(member.strip('"')) for member in members.split(" ")]
 
@@ -199,22 +206,15 @@ def search_till_subnet_is_found(old_addr_queue, old_subnet_list):
             )
 
 def expand_subnet_from_addr_grp(output):
-    def cond(key):
-        return output.get(key) in ['all']
-
-    def if_addr_meets_cond_do_nothing(key):
-        return {
-            True  : output.get(key),
-            False : search_till_subnet_is_found(output.get(key), [])
-        }[cond(key)]
-
     match args.expand:
         case 'none':
+            logging.debug("No subnet expansion")
             expansion = {}
         case 'addr':
+            logging.debug("Subnet expansion")
             expansion = {
-                'srcaddr' : if_addr_meets_cond_do_nothing('srcaddr'),
-                'dstaddr' : if_addr_meets_cond_do_nothing('dstaddr')
+                'srcaddr' : search_till_subnet_is_found(output.get('srcaddr'), []),
+                'dstaddr' : search_till_subnet_is_found(output.get('dstaddr'), [])
             }
 
     return output | expansion
