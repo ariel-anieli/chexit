@@ -39,8 +39,8 @@ def pipe(args, *funcs):
 
 def search_by_uuid(state, line):
     entry = re.sub('\n', '|', line)
-    start = "^\s*edit\s\d+"
-    end   = "^\s*next"
+    start = r"^\s*edit\s\d+"
+    end   = r"^\s*next"
 
     is_start = lambda: is_match(re.match(start, entry))
     is_end   = lambda: is_match(re.match(end, entry))
@@ -62,10 +62,10 @@ def search_by_v_polid(state, line):
     pol_id = state['keys'].split(',')[1]
     vdom   = state['keys'].split(',')[0]
 
-    in_global   = lambda: is_match(re.match("^\s*config global", entry))
-    in_vdom     = lambda: is_match(re.match("^\s*edit\s" + vdom, entry))
-    in_policy   = lambda: is_match(re.match("^\s*edit\s{}[^\d]".format(pol_id), entry))
-    in_policies = lambda: is_match(re.match("^\s*config firewall policy", entry))
+    in_global   = lambda: is_match(re.match(r"^\s*config global", entry))
+    in_vdom     = lambda: is_match(re.match(r"^\s*edit\s" + vdom, entry))
+    in_policy   = lambda: is_match(re.match(r"^\s*edit\s{}[^\d]".format(pol_id), entry))
+    in_policies = lambda: is_match(re.match(r"^\s*config firewall policy", entry))
 
     state['flag'] = {
         ''             : 'Waiting VDOM' if in_global()   else '',
@@ -74,10 +74,10 @@ def search_by_v_polid(state, line):
         'In policies'  : state['flag']
     }[state.get('flag', '')]
 
-    if re.match("^\s*edit\s{}[^\d]".format(pol_id), entry) \
+    if re.match(r"^\s*edit\s{}[^\d]".format(pol_id), entry) \
          and state['flag']=='In policies':
         state['search'] = entry
-    elif re.match("^\s*next", entry) \
+    elif re.match(r"^\s*next", entry) \
          and re.search(pol_id, state['search']):
         state['found'] = ''.join([state['search'], entry])
         dbg = 'Found ID {} in VDOM {}'.format(pol_id, vdom)
@@ -90,8 +90,8 @@ def search_by_v_polid(state, line):
 def search_addr_grp(state, line):
     entry = re.sub('\n', '|', line)
 
-    is_subnet  = lambda: is_match(re.search("set subnet (.*)\|$", state['search']))
-    is_addrgrp = lambda: is_match(re.search("set member (.*)\|$", state['search']))
+    is_subnet  = lambda: is_match(re.search(r"set subnet (.*)\|$", state['search']))
+    is_addrgrp = lambda: is_match(re.search(r"set member (.*)\|$", state['search']))
 
     if state["key"] == 'all':
         state['found'] = {'subnet' : 'all'}
@@ -99,14 +99,14 @@ def search_addr_grp(state, line):
     elif re.search('edit "{}"'.format(state["key"]), entry):
         state['search'] = entry
         state['flag'] = 'In address group'
-    elif re.search("\s*next", entry) and state['flag']=="In address group":
+    elif re.search(r"\s*next", entry) and state['flag']=="In address group":
         match (is_subnet(), is_addrgrp()):
             case (True, _):
-                match_ = re.search("set subnet (.*)\|$", state['search'])
+                match_ = re.search(r"set subnet (.*)\|$", state['search'])
                 state['found'] = {'subnet' : match_.group(1)}
                 logging.debug("{} : {}".format(state['key'], state['found']))
             case (_, True):
-                match_ = re.search("set member (.*)\|$", state['search'])
+                match_ = re.search(r"set member (.*)\|$", state['search'])
                 state['found'] = {'member' : match_.group(1)}
                 logging.debug("{} : {}".format(state['key'], state['found']))
     else:
@@ -121,7 +121,7 @@ def trim_keys(found):
     return functools.reduce(fill, found.split('|'), {})
 
 def split_field(field):
-    match = re.search('^(\w+) (.*)$', field)
+    match = re.search(r'^(\w+) (.*)$', field)
     key, val = match.groups()
 
     return (key, val) if key!='id' else (key, int(val))
@@ -135,9 +135,9 @@ def split_key_val_in_field(field):
 def trim_prfx(found):
     trimmer = lambda STR, RGX: re.sub(RGX[0], RGX[1], STR)
     keyset  = [
-        ('^\s+edit\s(?=\w+)', 'id '),
-        ('(?<=\|)\s+set\s',   ''),
-        ('\|\s+next.*$', ''),
+        (r'^\s+edit\s(?=\w+)', 'id '),
+        (r'(?<=\|)\s+set\s',   ''),
+        (r'\|\s+next.*$', ''),
         ('"', '')
     ]
 
