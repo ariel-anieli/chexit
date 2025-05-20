@@ -2,7 +2,7 @@ import argparse
 import functools
 import logging
 import ipaddress
-import itertools
+import itertools as it
 import json
 import re
 import sys
@@ -155,55 +155,50 @@ def lookup_key(config_name, key, search_by):
 
     with open(config_name) as config:
         return pipe(
-            itertools.accumulate(config, search_by(), initial=init),
-            lambda srch: itertools.takewhile(lambda o: not o['found'], srch),
+            it.accumulate(config, search_by(), initial=init),
+            lambda srch: it.takewhile(lambda o: not o['found'], srch),
             lambda findings: list(findings).pop()['found']
         )
 
-def add_addr_grp_to_search_or_get_subnet(init, addr):
-    addrs, subnets = init
+def add_addr_grp_to_search_or_get_subnet(init, _):
+    old_addrs, subnets = init
+    key, *new_addrs = old_addrs
+    default = {'found'  : ''}
     init_srch = {
-        'found'  : '',
         'search' : '',
-        'key'    : addrs.pop(0),
+        'key'    : key,
         'flag'   : ''
     }
 
     with open(args.config) as config:
-        temp = pipe(
-            itertools.accumulate(config, search_addr_grp, initial=init_srch),
-            lambda srch: itertools.takewhile(lambda o: not o['found'], srch),
-            lambda findings: list(findings).pop()['found']
-        )
+        all_results = it.accumulate(config, search_addr_grp, initial=init_srch)
+        search_result = next(filter(lambda o: o.get('found'), all_results), default)
 
-    match temp:
+    match search_result['found']:
         case {'subnet' : 'all'}:
-            subnets.append('all')
+            subnets.add('all')
         case {'subnet' : subnet}:
             ip_subnet = ipaddress.ip_network(subnet.replace(" ", "/"))
-            subnets.append(str(ip_subnet))
+            subnets.add(str(ip_subnet))
         case {'member' : members}:
-            [addrs.append(member.strip('"')) for member in members.split(" ")]
+            new_addrs.extend(member.strip('"') for member in members.split(" "))
+        case '':
+            subnets.union(set())
 
-    return (addrs, subnets)
+    return (new_addrs, subnets)
 
-def search_till_subnet_is_found(old_addr_queue, old_subnet_list):
-    match len(old_addr_queue):
-        case 0:
-            return old_subnet_list
-        case _:
-            length = range(len(old_addr_queue))
-            init   = (old_addr_queue, old_subnet_list)
-            new_addr_queue, new_subnet_list = functools.reduce(
-                add_addr_grp_to_search_or_get_subnet,
-                length,
-                init
-            )
+def search_till_subnet_is_found(old_addrs, old_subnets):
+    if not len(old_addrs):
+        return list(old_subnets)
 
-            return search_till_subnet_is_found(
-                new_addr_queue,
-                new_subnet_list
-            )
+    init = (old_addrs, old_subnets)
+    new_addrs, new_subnets = functools.reduce(
+        add_addr_grp_to_search_or_get_subnet,
+        range(len(old_addrs)),
+        init
+    )
+
+    return search_till_subnet_is_found(new_addrs, new_subnets)
 
 def expand_subnet_from_addr_grp(output):
     match args.expand:
@@ -213,8 +208,8 @@ def expand_subnet_from_addr_grp(output):
         case 'addr':
             logging.debug("Subnet expansion")
             expansion = {
-                'srcaddr' : search_till_subnet_is_found(output.get('srcaddr'), []),
-                'dstaddr' : search_till_subnet_is_found(output.get('dstaddr'), [])
+                'srcaddr' : search_till_subnet_is_found(output.get('srcaddr'), set()),
+                'dstaddr' : search_till_subnet_is_found(output.get('dstaddr'), set())
             }
 
     return output | expansion
