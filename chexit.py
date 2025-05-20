@@ -7,6 +7,8 @@ import json
 import re
 import sys
 
+from functools import reduce
+
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--config")
 parser.add_argument("-o", "--output", default=sys.stdout)
@@ -36,7 +38,7 @@ def is_match(_match):
 
 
 def pipe(args, *funcs):
-    return functools.reduce(lambda arg, func: func(arg), funcs, args)
+    return reduce(lambda arg, func: func(arg), funcs, args)
 
 
 def search_by_uuid(state, line):
@@ -125,7 +127,7 @@ def fill(info, field):
 
 
 def trim_keys(found):
-    return functools.reduce(fill, found.split("|"), {})
+    return reduce(fill, found.split("|"), {})
 
 
 def split_field(field):
@@ -151,7 +153,7 @@ def trim_prfx(found):
         ('"', ""),
     ]
 
-    return functools.reduce(trimmer, keyset, found)
+    return reduce(trimmer, keyset, found)
 
 
 def lookup_key(config_name, key, search_by):
@@ -196,7 +198,7 @@ def search_till_subnet_is_found(old_addrs, old_subnets):
         return list(old_subnets)
 
     init = (old_addrs, old_subnets)
-    new_addrs, new_subnets = functools.reduce(
+    new_addrs, new_subnets = reduce(
         add_addr_grp_to_search_or_get_subnet, range(len(old_addrs)), init
     )
 
@@ -253,9 +255,7 @@ def format_output(entries, formatter, line_sep=";"):
         case "json":
             return pipe(entries, json.dumps, logging.info)
         case "csv":
-            rows = [
-                functools.reduce(dict_to_string, entry.items(), "") for entry in entries
-            ]
+            rows = [reduce(dict_to_string, entry.items(), "") for entry in entries]
             head = line_sep.join(entries.pop(0).keys())
             output = ["sep=" + line_sep] + [head] + rows
 
