@@ -1,0 +1,21 @@
+[project]
+name = "chexit"
+version = "0.1.0"
+description = "A FortiGate configuration parser."
+authors = [{name = "Ariel Otilibili", email = "<otilibil@eurecom.fr>"}]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+]
+
+[project.urls]
+repository = "https://github.com/ariel-anieli/chexit"
+
+[tool.poetry]
+packages = [
+    { include = "chexit" }
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
