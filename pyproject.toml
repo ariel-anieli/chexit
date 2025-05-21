@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A FortiGate configuration parser."
 authors = [{name = "Ariel Otilibili", email = "<otilibil@eurecom.fr>"}]
 readme = "README.md"
+license = { file = "LICENSE.md" }
 requires-python = ">=3.9"
 dependencies = [
 ]
