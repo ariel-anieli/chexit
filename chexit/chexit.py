@@ -1,5 +1,4 @@
 import argparse
-import functools
 import logging
 import ipaddress
 import itertools as it
