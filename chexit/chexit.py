@@ -91,10 +91,7 @@ def search_by_v_polid(state, line):
 
 
 def search_addr_grp(state, line):
-    entry = re.sub("\n", "|", line)
-
-    is_subnet = lambda: is_match(re.search(r"set subnet (.*)\|$", state["search"]))
-    is_addrgrp = lambda: is_match(re.search(r"set member (.*)\|$", state["search"]))
+    entry = line.replace("\n", "|")
 
     if state["key"] == "all":
         state["found"] = {"subnet": "all"}
@@ -102,16 +99,13 @@ def search_addr_grp(state, line):
     elif re.search('edit "{}"'.format(state["key"]), entry):
         state["search"] = entry
         state["flag"] = "In address group"
-    elif re.search(r"\s*next", entry) and state["flag"] == "In address group":
-        match (is_subnet(), is_addrgrp()):
-            case (True, _):
-                match_ = re.search(r"set subnet (.*)\|$", state["search"])
-                state["found"] = {"subnet": match_.group(1)}
-                logging.debug(f"{state['key']} : {state['found']}")
-            case (_, True):
-                match_ = re.search(r"set member (.*)\|$", state["search"])
-                state["found"] = {"member": match_.group(1)}
-                logging.debug(f"{state['key']} : {state['found']}")
+    elif (
+        re.search(r"\s*next", entry)
+        and state["flag"] == "In address group"
+        and (m := re.search(r"set (subnet|member) (.*)\|$", state["search"]))
+    ):
+        state["found"] = {m.group(1): m.group(2)}
+        logging.debug(f"{state['key']} : {state['found']}")
     else:
         state["search"] = f"{state['search']}{entry}"
 
