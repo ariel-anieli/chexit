@@ -53,10 +53,10 @@ def search_by_uuid(state, line):
         case (True, _, _):
             state["search"] = entry
         case (_, True, True):
-            state["found"] = "".join([state["search"], entry])
-            logging.debug("Found {}".format(state["keys"]))
+            state["found"] = f"{state['search']}{entry}"
+            logging.debug(f"Found {state['keys']}")
         case _:
-            state["search"] = "".join([state["search"], entry])
+            state["search"] = f"{state['search']}{entry}"
 
     return state
 
@@ -68,7 +68,7 @@ def search_by_v_polid(state, line):
 
     in_global = lambda: is_match(re.match(r"^\s*config global", entry))
     in_vdom = lambda: is_match(re.match(r"^\s*edit\s" + vdom, entry))
-    in_policy = lambda: is_match(re.match(r"^\s*edit\s{}[^\d]".format(pol_id), entry))
+    in_policy = lambda: is_match(re.match(rf"^\s*edit\s{pol_id}[^\d]", entry))
     in_policies = lambda: is_match(re.match(r"^\s*config firewall policy", entry))
 
     state["flag"] = {
@@ -78,17 +78,14 @@ def search_by_v_polid(state, line):
         "In policies": state["flag"],
     }[state.get("flag", "")]
 
-    if (
-        re.match(r"^\s*edit\s{}[^\d]".format(pol_id), entry)
-        and state["flag"] == "In policies"
-    ):
+    if re.match(rf"^\s*edit\s{pol_id}[^\d]", entry) and state["flag"] == "In policies":
         state["search"] = entry
     elif re.match(r"^\s*next", entry) and re.search(pol_id, state["search"]):
-        state["found"] = "".join([state["search"], entry])
-        dbg = "Found ID {} in VDOM {}".format(pol_id, vdom)
+        state["found"] = f"{state['search']}{entry}"
+        dbg = f"Found ID {pol_id} in VDOM {vdom}"
         logging.debug(dbg)
     elif state["search"] and state["flag"] == "In policies":
-        state["search"] = "".join([state["search"], entry])
+        state["search"] = f"{state['search']}{entry}"
 
     return state
 
@@ -101,7 +98,7 @@ def search_addr_grp(state, line):
 
     if state["key"] == "all":
         state["found"] = {"subnet": "all"}
-        logging.debug("Found subnet {}".format(state["found"]))
+        logging.debug(f"Found subnet {state['found']}")
     elif re.search('edit "{}"'.format(state["key"]), entry):
         state["search"] = entry
         state["flag"] = "In address group"
@@ -110,13 +107,13 @@ def search_addr_grp(state, line):
             case (True, _):
                 match_ = re.search(r"set subnet (.*)\|$", state["search"])
                 state["found"] = {"subnet": match_.group(1)}
-                logging.debug("{} : {}".format(state["key"], state["found"]))
+                logging.debug(f"{state['key']} : {state['found']}")
             case (_, True):
                 match_ = re.search(r"set member (.*)\|$", state["search"])
                 state["found"] = {"member": match_.group(1)}
-                logging.debug("{} : {}".format(state["key"], state["found"]))
+                logging.debug(f"{state['key']} : {state['found']}")
     else:
-        state["search"] = "".join([state["search"], entry])
+        state["search"] = f"{state['search']}{entry}"
 
     return state
 
@@ -158,7 +155,7 @@ def trim_prfx(found):
 def lookup_key(config_name, key, search_by):
     init = {"found": "", "search": "", "keys": key, "flag": ""}
 
-    logging.debug("Looking up {}".format(key))
+    logging.debug(f"Looking up {key}")
 
     with open(config_name) as config:
         return pipe(
@@ -232,7 +229,7 @@ def lookup_keys(config_name, _type, key_list, list_sep=":"):
         return {"UUID": search_by_uuid, "VDOM-AND-POLID": search_by_v_polid}[_type]
 
     keys = key_list.split(list_sep)
-    logging.debug("Number of input, {}: {}".format(len(keys), keys))
+    logging.debug(f"Number of input, {len(keys)}: {keys}")
 
     return [pipe_flow(key) for key in keys]
 
@@ -245,10 +242,10 @@ def format_output(entries, formatter, line_sep=";"):
             case "id":
                 return str(value)
             case "name" | "uuid" | "action" | "logtraffic" | "comments":
-                return line_sep.join([line, value])
+                return f"{line}{line_sep}{value}"
             case "srcintf" | "dstintf" | "srcaddr" | "dstaddr" | "schedule" | "service":
                 joinedvalues = ",".join(value)
-                return line_sep.join([line, joinedvalues])
+                return f"{line}{line_sep}{joinedvalues}"
 
     match formatter:
         case "json":
@@ -264,7 +261,7 @@ def format_output(entries, formatter, line_sep=";"):
 if __name__ == "__main__":
     if sys.hexversion < 50856688:
         run = ".".join(map(str, sys.version_info[:3]))
-        err = "chexit requires at least Python 3.8.2; you have {}".format(run)
+        err = f"chexit requires at least Python 3.8.2; you have {run}"
         raise RuntimeError(err)
 
     if args.uuid:
