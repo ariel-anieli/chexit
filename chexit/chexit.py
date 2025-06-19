@@ -6,6 +6,17 @@ import json
 import re
 import sys
 
+from cffi import FFI
+import os
+
+cffi = FFI()
+cffi.cdef(
+    """
+    bool contains(char* haystack, char* needle);
+    """
+)
+string = cffi.dlopen(os.path.abspath("libstring.so"))
+
 from functools import reduce
 
 parser = argparse.ArgumentParser()
@@ -91,23 +102,27 @@ def search_by_v_polid(state, line):
 
 
 def search_addr_grp(state, line):
-    entry = line.replace("\n", "|")
+    entry = line.rstrip("\n")
+    needle = 'edit "{}"'.format(state["key"]).encode()
+    haystack = entry.encode()
 
     if state["key"] == "all":
         state["found"] = {"subnet": "all"}
         logging.debug(f"Found subnet {state['found']}")
-    elif re.search('edit "{}"'.format(state["key"]), entry):
-        state["search"] = entry
+
+    elif string.contains(haystack, needle):
+        state["search"] = [entry]
         state["flag"] = "In address group"
+
     elif (
-        re.search(r"\s*next", entry)
+        string.contains(haystack, b"next")
         and state["flag"] == "In address group"
-        and (m := re.search(r"set (subnet|member) (.*)\|$", state["search"]))
+        and (m := re.search(r"set (subnet|member) (.*)", state["search"][-1]))
     ):
         state["found"] = {m.group(1): m.group(2)}
         logging.debug(f"{state['key']} : {state['found']}")
     else:
-        state["search"] = f"{state['search']}{entry}"
+        state["search"].append(entry)
 
     return state
 
@@ -163,11 +178,13 @@ def add_addr_grp_to_search_or_get_subnet(init, _):
     old_addrs, subnets = init
     key, *new_addrs = old_addrs
     default = {"found": ""}
-    init_srch = {"search": "", "key": key, "flag": ""}
+    init_srch = {"search": [], "key": key, "flag": ""}
 
-    with open(args.config) as config:
-        all_results = it.accumulate(config, search_addr_grp, initial=init_srch)
-        search_result = next(filter(lambda o: o.get("found"), all_results), default)
+    with open(args.config) as _config:
+        config = _config.readlines()
+
+    all_results = it.accumulate(config, search_addr_grp, initial=init_srch)
+    search_result = next(filter(lambda o: o.get("found"), all_results), default)
 
     match search_result["found"]:
         case {"subnet": "all"}:
