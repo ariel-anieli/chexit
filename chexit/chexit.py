@@ -13,6 +13,8 @@ cffi = FFI()
 cffi.cdef(
     """
     bool contains(char* haystack, char* needle);
+    char* extract_member(char* haystack);
+    char* extract_subnet(char* haystack);
     """
 )
 string = cffi.dlopen(os.path.abspath("libstring.so"))
@@ -105,6 +107,7 @@ def search_addr_grp(state, line):
     entry = line.rstrip("\n")
     needle = 'edit "{}"'.format(state["key"]).encode()
     haystack = entry.encode()
+    action = "check-previous" if state["search"] else ""
 
     if state["key"] == "all":
         state["found"] = {"subnet": "all"}
@@ -115,11 +118,21 @@ def search_addr_grp(state, line):
         state["flag"] = "In address group"
 
     elif (
-        string.contains(haystack, b"next")
+        action in {"check-previous"}
+        and (previous := state["search"][-1].encode())
+        and string.contains(haystack, b"next")
         and state["flag"] == "In address group"
-        and (m := re.search(r"set (subnet|member) (.*)", state["search"][-1]))
+        and (
+            (member := string.contains(previous, b"set member"))
+            or (subnet := string.contains(previous, b"set subnet"))
+        )
     ):
-        state["found"] = {m.group(1): m.group(2)}
+        key, fun = (
+            ("member", string.extract_member)
+            if member
+            else ("subnet", string.extract_subnet)
+        )
+        state["found"] = {key: cffi.string(fun(previous)).decode("utf-8")}
         logging.debug(f"{state['key']} : {state['found']}")
     else:
         state["search"].append(entry)
