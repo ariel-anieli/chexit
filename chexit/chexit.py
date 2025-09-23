@@ -44,44 +44,44 @@ def search_by_uuid(state, line):
     entry = line.replace("\n", "|")
 
     if re.match(r"^\s*edit\s\d+", entry) is not None:
-        state["search"] = entry
+        state["Search"] = entry
     elif (
         re.match(r"^\s*next", entry) is not None
-        and re.search(state["keys"], state["search"]) is not None
+        and re.search(state["Keys"], state["Search"]) is not None
     ):
-        state["found"] = f"{state['search']}{entry}"
-        logging.debug(f"Found {state['keys']}")
+        state["Found"] = f"{state['Search']}{entry}"
+        logging.debug(f"Found {state['Keys']}")
     else:
-        state["search"] = f"{state['search']}{entry}"
+        state["Search"] = f"{state['Search']}{entry}"
 
     return state
 
 
 def search_by_v_polid(state, line):
     entry = re.sub("\n", "|", line)
-    pol_id = state["keys"].split(",")[1]
-    vdom = state["keys"].split(",")[0]
+    pol_id = state["Keys"].split(",")[1]
+    vdom = state["Keys"].split(",")[0]
 
     in_global = lambda: is_match(re.match(r"^\s*config global", entry))
     in_vdom = lambda: is_match(re.match(r"^\s*edit\s" + vdom, entry))
     in_policy = lambda: is_match(re.match(rf"^\s*edit\s{pol_id}[^\d]", entry))
     in_policies = lambda: is_match(re.match(r"^\s*config firewall policy", entry))
 
-    state["flag"] = {
+    state["Flag"] = {
         "": "Waiting VDOM" if in_global() else "",
-        "Waiting VDOM": "In VDOM" if in_vdom() else state["flag"],
-        "In VDOM": "In policies" if in_policies() else state["flag"],
-        "In policies": state["flag"],
-    }[state.get("flag", "")]
+        "Waiting VDOM": "In VDOM" if in_vdom() else state["Flag"],
+        "In VDOM": "In policies" if in_policies() else state["Flag"],
+        "In policies": state["Flag"],
+    }[state.get("Flag", "")]
 
-    if re.match(rf"^\s*edit\s{pol_id}[^\d]", entry) and state["flag"] == "In policies":
-        state["search"] = entry
-    elif re.match(r"^\s*next", entry) and re.search(pol_id, state["search"]):
-        state["found"] = f"{state['search']}{entry}"
+    if re.match(rf"^\s*edit\s{pol_id}[^\d]", entry) and state["Flag"] == "In policies":
+        state["Search"] = entry
+    elif re.match(r"^\s*next", entry) and re.search(pol_id, state["Search"]):
+        state["Found"] = f"{state['Search']}{entry}"
         dbg = f"Found ID {pol_id} in VDOM {vdom}"
         logging.debug(dbg)
-    elif state["search"] and state["flag"] == "In policies":
-        state["search"] = f"{state['search']}{entry}"
+    elif state["Search"] and state["Flag"] == "In policies":
+        state["Search"] = f"{state['Search']}{entry}"
 
     return state
 
@@ -89,27 +89,27 @@ def search_by_v_polid(state, line):
 def search_addr_grp(state, line):
     entry = re.sub("\n", "|", line)
 
-    is_subnet = lambda: is_match(re.search(r"set subnet (.*)\|$", state["search"]))
-    is_addrgrp = lambda: is_match(re.search(r"set member (.*)\|$", state["search"]))
+    is_subnet = lambda: is_match(re.search(r"set subnet (.*)\|$", state["Search"]))
+    is_addrgrp = lambda: is_match(re.search(r"set member (.*)\|$", state["Search"]))
 
-    if state["key"] == "all":
-        state["found"] = {"subnet": "all"}
-        logging.debug(f"Found subnet {state['found']}")
-    elif re.search('edit "{}"'.format(state["key"]), entry):
-        state["search"] = entry
-        state["flag"] = "In address group"
-    elif re.search(r"\s*next", entry) and state["flag"] == "In address group":
+    if state["Key"] == "all":
+        state["Found"] = {"subnet": "all"}
+        logging.debug(f"Found subnet {state['Found']}")
+    elif re.search('edit "{}"'.format(state["Key"]), entry):
+        state["Search"] = entry
+        state["Flag"] = "In address group"
+    elif re.search(r"\s*next", entry) and state["Flag"] == "In address group":
         match (is_subnet(), is_addrgrp()):
             case (True, _):
-                match_ = re.search(r"set subnet (.*)\|$", state["search"])
-                state["found"] = {"subnet": match_.group(1)}
-                logging.debug(f"{state['key']} : {state['found']}")
+                match_ = re.search(r"set subnet (.*)\|$", state["Search"])
+                state["Found"] = {"subnet": match_.group(1)}
+                logging.debug(f"{state['Key']} : {state['Found']}")
             case (_, True):
-                match_ = re.search(r"set member (.*)\|$", state["search"])
-                state["found"] = {"member": match_.group(1)}
-                logging.debug(f"{state['key']} : {state['found']}")
+                match_ = re.search(r"set member (.*)\|$", state["Search"])
+                state["Found"] = {"member": match_.group(1)}
+                logging.debug(f"{state['Key']} : {state['Found']}")
     else:
-        state["search"] = f"{state['search']}{entry}"
+        state["Search"] = f"{state['Search']}{entry}"
 
     return state
 
@@ -149,29 +149,29 @@ def trim_prfx(found):
 
 
 def lookup_key(config_name, key, search_by):
-    init = {"found": "", "search": "", "keys": key, "flag": ""}
+    init = {"Found": "", "Search": "", "Keys": key, "Flag": ""}
 
     logging.debug(f"Looking up {key}")
 
     with open(config_name) as config:
         return pipe(
             it.accumulate(config, search_by(), initial=init),
-            lambda srch: it.takewhile(lambda o: not o["found"], srch),
-            lambda findings: list(findings).pop()["found"],
+            lambda srch: it.takewhile(lambda o: not o["Found"], srch),
+            lambda findings: list(findings).pop()["Found"],
         )
 
 
 def add_addr_grp_to_search_or_get_subnet(init, _):
     old_addrs, subnets = init
     key, *new_addrs = old_addrs
-    default = {"found": ""}
-    init_srch = {"search": "", "key": key, "flag": ""}
+    default = {"Found": ""}
+    init_srch = {"Search": "", "Key": key, "Flag": ""}
 
     with open(args.config) as config:
         all_results = it.accumulate(config, search_addr_grp, initial=init_srch)
-        search_result = next(filter(lambda o: o.get("found"), all_results), default)
+        search_result = next(filter(lambda o: o.get("Found"), all_results), default)
 
-    match search_result["found"]:
+    match search_result["Found"]:
         case {"subnet": "all"}:
             subnets.add("all")
         case {"subnet": subnet}:
