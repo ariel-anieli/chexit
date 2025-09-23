@@ -41,22 +41,18 @@ def pipe(args, *funcs):
 
 
 def search_by_uuid(state, line):
-    entry = re.sub("\n", "|", line)
-    start = r"^\s*edit\s\d+"
-    end = r"^\s*next"
+    entry = line.replace("\n", "|")
 
-    is_start = lambda: is_match(re.match(start, entry))
-    is_end = lambda: is_match(re.match(end, entry))
-    is_found = lambda: is_match(re.search(state["keys"], state["search"]))
-
-    match (is_start(), is_found(), is_end()):
-        case (True, _, _):
-            state["search"] = entry
-        case (_, True, True):
-            state["found"] = f"{state['search']}{entry}"
-            logging.debug(f"Found {state['keys']}")
-        case _:
-            state["search"] = f"{state['search']}{entry}"
+    if re.match(r"^\s*edit\s\d+", entry) is not None:
+        state["search"] = entry
+    elif (
+        re.match(r"^\s*next", entry) is not None
+        and re.search(state["keys"], state["search"]) is not None
+    ):
+        state["found"] = f"{state['search']}{entry}"
+        logging.debug(f"Found {state['keys']}")
+    else:
+        state["search"] = f"{state['search']}{entry}"
 
     return state
 
