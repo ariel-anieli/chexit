@@ -150,16 +150,15 @@ def trim_prfx(found):
 
 def lookup_key(config_name, key, search_by):
     init = {"Found": "", "Search": "", "Keys": key, "Flag": ""}
+    default = {"Found": ""}
 
     logging.debug(f"Looking up {key}")
 
     with open(config_name) as config:
-        return pipe(
-            it.accumulate(config, search_by(), initial=init),
-            lambda srch: it.takewhile(lambda o: not o["Found"], srch),
-            lambda findings: list(findings).pop()["Found"],
-        )
+        all_results = it.accumulate(config, search_by(), initial=init)
+        search_result = next(filter(lambda o: o.get("Found"), all_results), default)
 
+    return search_result["Found"]
 
 def add_addr_grp_to_search_or_get_subnet(init, _):
     old_addrs, subnets = init
