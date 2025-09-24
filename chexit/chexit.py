@@ -3,10 +3,12 @@ import logging
 import ipaddress
 import itertools as it
 import json
+import os
 import re
 import sys
 
 from functools import reduce
+from cffi import FFI
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--config")
@@ -30,6 +32,15 @@ if args.output == sys.stdout:
     logging.basicConfig(stream=args.output, format=FORMAT, level=LEVEL)
 else:
     logging.basicConfig(filename=args.output, filemode="w", format=FORMAT, level=LEVEL)
+
+# FFI
+cffi = FFI()
+cffi.cdef("""
+char* search_by_uuid(char* state, char* line);
+char* trim_prfx(char* found);
+char* trim_keys(char* found);
+""")
+dll = cffi.dlopen(os.path.abspath("util.so"))
 
 
 def is_match(_match):
@@ -114,38 +125,12 @@ def search_addr_grp(state, line):
     return state
 
 
-def fill(info, field):
-    return info | dict([split_key_val_in_field(field)])
-
-
 def trim_keys(found):
-    return reduce(fill, found.split("|"), {})
-
-
-def split_field(field):
-    match = re.search(r"^(\w+) (.*)$", field)
-    key, val = match.groups()
-
-    return (key, val) if key != "id" else (key, int(val))
-
-
-def split_key_val_in_field(field):
-    key, *value = re.split(" ", field)
-    cond = not re.match("^(id|name|action|logtraffic|uuid|comments)", field)
-
-    return (key, value) if cond else split_field(field)
+    return json.loads(cffi.string(dll.trim_keys(found.encode())).decode("utf-8"))
 
 
 def trim_prfx(found):
-    trimmer = lambda STR, RGX: re.sub(RGX[0], RGX[1], STR)
-    keyset = [
-        (r"^\s+edit\s(?=\w+)", "id "),
-        (r"(?<=\|)\s+set\s", ""),
-        (r"\|\s+next.*$", ""),
-        ('"', ""),
-    ]
-
-    return reduce(trimmer, keyset, found)
+    return cffi.string(dll.trim_prfx(found.encode())).decode("utf-8")
 
 
 def lookup_key(config_name, key, search_by):
@@ -159,6 +144,7 @@ def lookup_key(config_name, key, search_by):
         search_result = next(filter(lambda o: o.get("Found"), all_results), default)
 
     return search_result["Found"]
+
 
 def add_addr_grp_to_search_or_get_subnet(init, _):
     old_addrs, subnets = init
@@ -270,3 +256,5 @@ if __name__ == "__main__":
         lookup_keys(args.config, _type, keys),
         lambda output: format_output(output, args.formatter),
     )
+
+    cffi.dlclose(dll)
