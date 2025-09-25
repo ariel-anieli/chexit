@@ -2,14 +2,59 @@ package main
 
 import (
 	"C"
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
 type State struct{ Flag, Found, Keys, Search string }
+type StateAddrGroup struct {
+	Found     map[string]string
+	Flag, Key string
+}
+
+//export add_addr_grp_to_search_or_get_subnet
+func add_addr_grp_to_search_or_get_subnet(filename, key *C.char) *C.char {
+	var state StateAddrGroup = StateAddrGroup{Key: C.GoString(key)}
+	pattern := fmt.Sprintf(`edit "%s"`, state.Key)
+	addrRe := regexp.MustCompile(`set (subnet|member) (.*)$`)
+
+	file, err := os.Open(C.GoString(filename))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		entry := scanner.Text()
+		addr := addrRe.FindStringSubmatch(entry)
+
+		if state.Key == "all" {
+			state.Found = map[string]string{"subnet": "all"}
+			break
+		}
+
+		if s, _ := regexp.MatchString(pattern, entry); s {
+			state.Flag = "In address group"
+		} else if state.Flag == "In address group" && addr != nil {
+			state.Found = map[string]string{addr[1]: addr[2]}
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	jsonStr, _ := json.Marshal(state.Found)
+	return C.CString(string(jsonStr))
+}
 
 //export search_by_uuid
 func search_by_uuid(CState, CLine *C.char) *C.char {

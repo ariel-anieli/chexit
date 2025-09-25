@@ -36,6 +36,7 @@ else:
 # FFI
 cffi = FFI()
 cffi.cdef("""
+char* add_addr_grp_to_search_or_get_subnet(char* filename, char* key);
 char* search_by_uuid(char* state, char* line);
 char* trim_prfx(char* found);
 char* trim_keys(char* found);
@@ -97,34 +98,6 @@ def search_by_v_polid(state, line):
     return state
 
 
-def search_addr_grp(state, line):
-    entry = re.sub("\n", "|", line)
-
-    is_subnet = lambda: is_match(re.search(r"set subnet (.*)\|$", state["Search"]))
-    is_addrgrp = lambda: is_match(re.search(r"set member (.*)\|$", state["Search"]))
-
-    if state["Key"] == "all":
-        state["Found"] = {"subnet": "all"}
-        logging.debug(f"Found subnet {state['Found']}")
-    elif re.search('edit "{}"'.format(state["Key"]), entry):
-        state["Search"] = entry
-        state["Flag"] = "In address group"
-    elif re.search(r"\s*next", entry) and state["Flag"] == "In address group":
-        match (is_subnet(), is_addrgrp()):
-            case (True, _):
-                match_ = re.search(r"set subnet (.*)\|$", state["Search"])
-                state["Found"] = {"subnet": match_.group(1)}
-                logging.debug(f"{state['Key']} : {state['Found']}")
-            case (_, True):
-                match_ = re.search(r"set member (.*)\|$", state["Search"])
-                state["Found"] = {"member": match_.group(1)}
-                logging.debug(f"{state['Key']} : {state['Found']}")
-    else:
-        state["Search"] = f"{state['Search']}{entry}"
-
-    return state
-
-
 def trim_keys(found):
     return json.loads(cffi.string(dll.trim_keys(found.encode())).decode("utf-8"))
 
@@ -149,14 +122,12 @@ def lookup_key(config_name, key, search_by):
 def add_addr_grp_to_search_or_get_subnet(init, _):
     old_addrs, subnets = init
     key, *new_addrs = old_addrs
-    default = {"Found": ""}
-    init_srch = {"Search": "", "Key": key, "Flag": ""}
 
-    with open(args.config) as config:
-        all_results = it.accumulate(config, search_addr_grp, initial=init_srch)
-        search_result = next(filter(lambda o: o.get("Found"), all_results), default)
-
-    match search_result["Found"]:
+    match json.loads(
+        cffi.string(
+            dll.add_addr_grp_to_search_or_get_subnet(args.config.encode(), key.encode())
+        ).decode("utf-8")
+    ):
         case {"subnet": "all"}:
             subnets.add("all")
         case {"subnet": subnet}:
