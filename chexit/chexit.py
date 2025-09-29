@@ -145,9 +145,10 @@ def search_till_subnet_is_found(old_addrs, old_subnets):
     if not len(old_addrs):
         return list(old_subnets)
 
-    init = (old_addrs, old_subnets)
     new_addrs, new_subnets = reduce(
-        add_addr_grp_to_search_or_get_subnet, range(len(old_addrs)), init
+        add_addr_grp_to_search_or_get_subnet,
+        range(len(old_addrs)),
+        (old_addrs, old_subnets),
     )
 
     return search_till_subnet_is_found(new_addrs, new_subnets)
@@ -211,11 +212,6 @@ def format_output(entries, formatter, line_sep=";"):
 
 
 if __name__ == "__main__":
-    if sys.hexversion < 50856688:
-        run = ".".join(map(str, sys.version_info[:3]))
-        err = f"chexit requires at least Python 3.8.2; you have {run}"
-        raise RuntimeError(err)
-
     if args.uuid:
         _type = "UUID"
         keys = args.uuid
