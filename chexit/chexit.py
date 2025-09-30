@@ -36,7 +36,7 @@ else:
 # FFI
 cffi = FFI()
 cffi.cdef("""
-char* add_addr_grp_to_search_or_get_subnet(char* filename, char* key);
+char* add_addr_grp_to_search_or_get_subnet(char* state);
 char* search_by_uuid(char* state, char* line);
 char* trim_prfx(char* found);
 char* trim_keys(char* found);
@@ -123,22 +123,17 @@ def add_addr_grp_to_search_or_get_subnet(init, _):
     old_addrs, subnets = init
     key, *new_addrs = old_addrs
 
-    match json.loads(
-        cffi.string(
-            dll.add_addr_grp_to_search_or_get_subnet(args.config.encode(), key.encode())
-        ).decode("utf-8")
-    ):
-        case {"subnet": "all"}:
-            subnets.add("all")
-        case {"subnet": subnet}:
-            ip_subnet = ipaddress.ip_network(subnet.replace(" ", "/"))
-            subnets.add(str(ip_subnet))
-        case {"member": members}:
-            new_addrs.extend(member.strip('"') for member in members.split(" "))
-        case "":
-            subnets.union(set())
+    old_state = json.dumps(
+        {"Key": key, "Addrs": new_addrs, "Subnets": subnets, "Filename": args.config}
+    )
 
-    return (new_addrs, subnets)
+    new_state = json.loads(
+        cffi.string(
+            dll.add_addr_grp_to_search_or_get_subnet(old_state.encode())
+        ).decode("utf-8")
+    )
+
+    return (new_state["Addrs"], new_state["Subnets"])
 
 
 def search_till_subnet_is_found(old_addrs, old_subnets):
@@ -162,8 +157,8 @@ def expand_subnet_from_addr_grp(output):
         case "addr":
             logging.debug("Subnet expansion")
             expansion = {
-                "srcaddr": search_till_subnet_is_found(output.get("srcaddr"), set()),
-                "dstaddr": search_till_subnet_is_found(output.get("dstaddr"), set()),
+                "srcaddr": search_till_subnet_is_found(output.get("srcaddr"), {}),
+                "dstaddr": search_till_subnet_is_found(output.get("dstaddr"), {}),
             }
 
     return output | expansion

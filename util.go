@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -13,38 +14,47 @@ import (
 )
 
 type State struct{ Flag, Found, Keys, Search string }
+
 type StateAddrGroup struct {
-	Found     map[string]string
-	Flag, Key string
+	Subnets             map[string]string
+	Addrs               []string
+	Flag, Key, Filename string
 }
 
 //export add_addr_grp_to_search_or_get_subnet
-func add_addr_grp_to_search_or_get_subnet(filename, key *C.char) *C.char {
-	var state StateAddrGroup = StateAddrGroup{Key: C.GoString(key)}
+func add_addr_grp_to_search_or_get_subnet(CState *C.char) *C.char {
+	state := &StateAddrGroup{}
+
+	json.Unmarshal([]byte(C.GoString(CState)), state)
+
 	pattern := fmt.Sprintf(`edit "%s"`, state.Key)
 	addrRe := regexp.MustCompile(`set (subnet|member) (.*)$`)
 
-	file, err := os.Open(C.GoString(filename))
+	file, err := os.Open(state.Filename)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
-
 	scanner := bufio.NewScanner(file)
+
+	if state.Key == "all" {
+		state.Subnets["all"] = "all"
+		goto exit
+	}
+
 	for scanner.Scan() {
 		entry := scanner.Text()
 		addr := addrRe.FindStringSubmatch(entry)
 
-		if state.Key == "all" {
-			state.Found = map[string]string{"subnet": "all"}
-			break
-		}
-
 		if s, _ := regexp.MatchString(pattern, entry); s {
 			state.Flag = "In address group"
 		} else if state.Flag == "In address group" && addr != nil {
-			state.Found = map[string]string{addr[1]: addr[2]}
-			break
+			if addr[1] == "subnet" {
+				addSubnet(addr[2], state)
+			} else if addr[1] == "member" {
+				addAddrs(addr[2], state)
+			}
+			goto exit
 		}
 	}
 
@@ -52,7 +62,8 @@ func add_addr_grp_to_search_or_get_subnet(filename, key *C.char) *C.char {
 		log.Fatal(err)
 	}
 
-	jsonStr, _ := json.Marshal(state.Found)
+exit:
+	jsonStr, _ := json.Marshal(*state)
 	return C.CString(string(jsonStr))
 }
 
@@ -108,6 +119,23 @@ func trim_prfx(found *C.char) *C.char {
 	}
 
 	return C.CString(output)
+}
+
+func addAddrs(addr string, state *StateAddrGroup) {
+	for _, member := range strings.Split(addr, " ") {
+		state.Addrs = append(state.Addrs, strings.ReplaceAll(member, `"`, ""))
+	}
+}
+
+func addSubnet(addr string, state *StateAddrGroup) {
+	fields := strings.Split(addr, " ")
+	subnet := fmt.Sprintf("%s/%s", fields[0], getCIDR(fields[1]))
+	state.Subnets[subnet] = subnet
+}
+
+func getCIDR(mask string) string {
+	length, _ := net.IPMask(net.ParseIP(mask).To4()).Size()
+	return strconv.Itoa(length)
 }
 
 func split_field(field string) (string, interface{}) {
