@@ -13,12 +13,18 @@ import (
 	"strings"
 )
 
+const (
+	IN_GRP int = iota
+	IN_ADDR
+)
+
 type State struct{ Flag, Found, Keys, Search string }
 
 type StateAddrGroup struct {
-	Subnets             map[string]string
-	Addrs               []string
-	Flag, Key, Filename string
+	Subnets       map[string]string
+	Addrs         []string
+	Filename, Key string
+	Flag          int
 }
 
 //export add_addr_grp_to_search_or_get_subnet
@@ -46,9 +52,11 @@ func add_addr_grp_to_search_or_get_subnet(CState *C.char) *C.char {
 		entry := scanner.Text()
 		addr := addrRe.FindStringSubmatch(entry)
 
-		if s, _ := regexp.MatchString(pattern, entry); s {
-			state.Flag = "In address group"
-		} else if state.Flag == "In address group" && addr != nil {
+		if ok, _ := regexp.MatchString(`config firewall addrgrp`, entry); ok {
+			state.Flag = IN_GRP
+		} else if ok, _ := regexp.MatchString(pattern, entry); ok && state.Flag == IN_GRP {
+			state.Flag = IN_ADDR
+		} else if state.Flag == IN_ADDR && addr != nil {
 			if addr[1] == "subnet" {
 				addSubnet(addr[2], state)
 			} else if addr[1] == "member" {
