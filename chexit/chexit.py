@@ -36,8 +36,8 @@ else:
 # FFI
 cffi = FFI()
 cffi.cdef("""
-char* add_addr_grp_to_search_or_get_subnet(char* state);
 char* search_by_uuid(char* state, char* line);
+char* search_till_subnet_is_found(char* state);
 char* trim_prfx(char* found);
 char* trim_keys(char* found);
 """)
@@ -119,34 +119,20 @@ def lookup_key(config_name, key, search_by):
     return search_result["Found"]
 
 
-def add_addr_grp_to_search_or_get_subnet(init, _):
-    old_addrs, subnets = init
-    key, *new_addrs = old_addrs
-
-    old_state = json.dumps(
-        {"Key": key, "Addrs": new_addrs, "Subnets": subnets, "Filename": args.config}
-    )
-
-    new_state = json.loads(
+def search_till_subnet_is_found(addrs, subnets):
+    return json.loads(
         cffi.string(
-            dll.add_addr_grp_to_search_or_get_subnet(old_state.encode())
+            dll.search_till_subnet_is_found(
+                json.dumps(
+                    {
+                        "Addrs": addrs,
+                        "Subnets": subnets,
+                        "Filename": args.config,
+                    }
+                ).encode()
+            )
         ).decode("utf-8")
     )
-
-    return (new_state["Addrs"], new_state["Subnets"])
-
-
-def search_till_subnet_is_found(old_addrs, old_subnets):
-    if not len(old_addrs):
-        return list(old_subnets)
-
-    new_addrs, new_subnets = reduce(
-        add_addr_grp_to_search_or_get_subnet,
-        range(len(old_addrs)),
-        (old_addrs, old_subnets),
-    )
-
-    return search_till_subnet_is_found(new_addrs, new_subnets)
 
 
 def expand_subnet_from_addr_grp(output):
