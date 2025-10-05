@@ -17,25 +17,38 @@ import (
 
 type State struct{ Flag, Found, Keys, Search string }
 
-type StateAddrGroup struct {
-	Subnets  map[string]string
-	Addrs    []string
-	Filename string
+type addrGroup struct {
+	subnets  map[string]string
+	addrs    []string
+	filename string
 }
 
-//export search_till_subnet_is_found
-func search_till_subnet_is_found(CState *C.char) *C.char {
-	state := &StateAddrGroup{}
-	json.Unmarshal([]byte(C.GoString(CState)), state)
+type Policy struct {
+	ID       int      `json:"id"`
+	Name     string   `json:"name"`
+	UUID     string   `json:"uuid"`
+	Srcintf  []string `json:"srcintf"`
+	DstIntf  []string `json:"dstintf"`
+	SrcAddr  []string `json:"srcaddr"`
+	DstAddr  []string `json:"dstaddr"`
+	Service  []string `json:"service"`
+	Schedule []string `json:"schedule"`
+	Action   string   `json:"action"`
+}
 
-	for len(state.Addrs) != 0 {
-		for _ = range len(state.Addrs) {
-			add_addr_grp_to_search_or_get_subnet(state)
-		}
+//export expand_subnet_from_addr_grp
+func expand_subnet_from_addr_grp(CPolicy, expander, CFilename *C.char) *C.char {
+	policy := &Policy{}
+	json.Unmarshal([]byte(C.GoString(CPolicy)), policy)
+
+	if C.GoString(expander) == "addr" {
+		group := &addrGroup{filename: C.GoString(CFilename), addrs: policy.SrcAddr}
+		policy.SrcAddr = expand_subnets(group)
+		group.addrs = policy.DstAddr
+		policy.DstAddr = expand_subnets(group)
 	}
 
-	subnets := slices.Collect(maps.Keys((*state).Subnets))
-	jsonStr, _ := json.Marshal(subnets)
+	jsonStr, _ := json.Marshal(policy)
 	return C.CString(string(jsonStr))
 }
 
@@ -93,7 +106,7 @@ func trim_prfx(found *C.char) *C.char {
 	return C.CString(output)
 }
 
-func add_addr_grp_to_search_or_get_subnet(state *StateAddrGroup) {
+func add_addr_or_subnet(group *addrGroup) {
 	const (
 		IN_GRP int = iota
 		IN_ADDR
@@ -102,11 +115,11 @@ func add_addr_grp_to_search_or_get_subnet(state *StateAddrGroup) {
 	var key string
 	var flag int
 
-	key, state.Addrs = state.Addrs[0], state.Addrs[1:]
+	key, group.addrs = group.addrs[0], group.addrs[1:]
 	pattern := fmt.Sprintf(`edit "%s"`, key)
 	addrRe := regexp.MustCompile(`set (subnet|member) (.*)$`)
 
-	file, err := os.Open(state.Filename)
+	file, err := os.Open(group.filename)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -114,7 +127,7 @@ func add_addr_grp_to_search_or_get_subnet(state *StateAddrGroup) {
 	scanner := bufio.NewScanner(file)
 
 	if key == "all" {
-		state.Subnets["all"] = "all"
+		group.subnets["all"] = "all"
 		return
 	}
 
@@ -128,9 +141,9 @@ func add_addr_grp_to_search_or_get_subnet(state *StateAddrGroup) {
 			flag = IN_ADDR
 		} else if flag == IN_ADDR && addr != nil {
 			if addr[1] == "subnet" {
-				addSubnet(addr[2], state)
+				addSubnet(addr[2], group)
 			} else if addr[1] == "member" {
-				addAddrs(addr[2], state)
+				addAddrs(addr[2], group)
 			}
 			return
 		}
@@ -141,16 +154,27 @@ func add_addr_grp_to_search_or_get_subnet(state *StateAddrGroup) {
 	}
 }
 
-func addAddrs(addr string, state *StateAddrGroup) {
+func addAddrs(addr string, group *addrGroup) {
 	for _, member := range strings.Split(addr, " ") {
-		state.Addrs = append(state.Addrs, strings.ReplaceAll(member, `"`, ""))
+		group.addrs = append(group.addrs, strings.ReplaceAll(member, `"`, ""))
 	}
 }
 
-func addSubnet(addr string, state *StateAddrGroup) {
+func addSubnet(addr string, group *addrGroup) {
 	fields := strings.Split(addr, " ")
 	subnet := fmt.Sprintf("%s/%s", fields[0], getCIDR(fields[1]))
-	state.Subnets[subnet] = subnet
+	group.subnets[subnet] = subnet
+}
+
+func expand_subnets(group *addrGroup) []string {
+	group.subnets = make(map[string]string)
+	for len(group.addrs) != 0 {
+		for _ = range len(group.addrs) {
+			add_addr_or_subnet(group)
+		}
+	}
+
+	return slices.Collect(maps.Keys((*group).subnets))
 }
 
 func getCIDR(mask string) string {

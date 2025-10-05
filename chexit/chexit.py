@@ -36,8 +36,8 @@ else:
 # FFI
 cffi = FFI()
 cffi.cdef("""
+char* expand_subnet_from_addr_grp(char* output, char* expander, char* filename);
 char* search_by_uuid(char* state, char* line);
-char* search_till_subnet_is_found(char* state);
 char* trim_prfx(char* found);
 char* trim_keys(char* found);
 """)
@@ -119,35 +119,14 @@ def lookup_key(config_name, key, search_by):
     return search_result["Found"]
 
 
-def search_till_subnet_is_found(addrs, subnets):
+def expand_subnet_from_addr_grp(output):
     return json.loads(
         cffi.string(
-            dll.search_till_subnet_is_found(
-                json.dumps(
-                    {
-                        "Addrs": addrs,
-                        "Subnets": subnets,
-                        "Filename": args.config,
-                    }
-                ).encode()
+            dll.expand_subnet_from_addr_grp(
+                json.dumps(output).encode(), args.expand.encode(), args.config.encode()
             )
         ).decode("utf-8")
     )
-
-
-def expand_subnet_from_addr_grp(output):
-    match args.expand:
-        case "none":
-            logging.debug("No subnet expansion")
-            expansion = {}
-        case "addr":
-            logging.debug("Subnet expansion")
-            expansion = {
-                "srcaddr": search_till_subnet_is_found(output.get("srcaddr"), {}),
-                "dstaddr": search_till_subnet_is_found(output.get("dstaddr"), {}),
-            }
-
-    return output | expansion
 
 
 def lookup_keys(config_name, _type, key_list, list_sep=":"):
