@@ -38,6 +38,7 @@ cffi = FFI()
 cffi.cdef("""
 char* expand_subnet_from_addr_grp(char* output, char* expander, char* filename);
 char* search_by_uuid(char* state, char* line);
+char* search_by_v_polid(char* state, char* line);
 char* trim_prfx(char* found);
 char* trim_keys(char* found);
 """)
@@ -53,49 +54,19 @@ def pipe(args, *funcs):
 
 
 def search_by_uuid(state, line):
-    entry = line.replace("\n", "|")
-
-    if re.match(r"^\s*edit\s\d+", entry) is not None:
-        state["Search"] = entry
-    elif (
-        re.match(r"^\s*next", entry) is not None
-        and re.search(state["Keys"], state["Search"]) is not None
-    ):
-        state["Found"] = f"{state['Search']}{entry}"
-        logging.debug(f"Found {state['Keys']}")
-    else:
-        state["Search"] = f"{state['Search']}{entry}"
-
-    return state
+    return json.loads(
+        cffi.string(
+            dll.search_by_uuid(json.dumps(state).encode(), line.encode())
+        ).decode("utf-8")
+    )
 
 
 def search_by_v_polid(state, line):
-    entry = re.sub("\n", "|", line)
-    pol_id = state["Keys"].split(",")[1]
-    vdom = state["Keys"].split(",")[0]
-
-    in_global = lambda: is_match(re.match(r"^\s*config global", entry))
-    in_vdom = lambda: is_match(re.match(r"^\s*edit\s" + vdom, entry))
-    in_policy = lambda: is_match(re.match(rf"^\s*edit\s{pol_id}[^\d]", entry))
-    in_policies = lambda: is_match(re.match(r"^\s*config firewall policy", entry))
-
-    state["Flag"] = {
-        "": "Waiting VDOM" if in_global() else "",
-        "Waiting VDOM": "In VDOM" if in_vdom() else state["Flag"],
-        "In VDOM": "In policies" if in_policies() else state["Flag"],
-        "In policies": state["Flag"],
-    }[state.get("Flag", "")]
-
-    if re.match(rf"^\s*edit\s{pol_id}[^\d]", entry) and state["Flag"] == "In policies":
-        state["Search"] = entry
-    elif re.match(r"^\s*next", entry) and re.search(pol_id, state["Search"]):
-        state["Found"] = f"{state['Search']}{entry}"
-        dbg = f"Found ID {pol_id} in VDOM {vdom}"
-        logging.debug(dbg)
-    elif state["Search"] and state["Flag"] == "In policies":
-        state["Search"] = f"{state['Search']}{entry}"
-
-    return state
+    return json.loads(
+        cffi.string(
+            dll.search_by_v_polid(json.dumps(state).encode(), line.encode())
+        ).decode("utf-8")
+    )
 
 
 def trim_keys(found):
@@ -107,16 +78,16 @@ def trim_prfx(found):
 
 
 def lookup_key(config_name, key, search_by):
-    init = {"Found": "", "Search": "", "Keys": key, "Flag": ""}
-    default = {"Found": ""}
+    init = {"found": "", "search": "", "keys": key, "flag": ""}
+    default = {"found": ""}
 
     logging.debug(f"Looking up {key}")
 
     with open(config_name) as config:
         all_results = it.accumulate(config, search_by(), initial=init)
-        search_result = next(filter(lambda o: o.get("Found"), all_results), default)
+        search_result = next(filter(lambda o: o.get("found"), all_results), default)
 
-    return search_result["Found"]
+    return search_result["found"]
 
 
 def expand_subnet_from_addr_grp(output):

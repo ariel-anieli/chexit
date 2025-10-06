@@ -15,7 +15,19 @@ import (
 	"strings"
 )
 
-type State struct{ Flag, Found, Keys, Search string }
+type State struct {
+	Flag   int    `json:"flag"`
+	Found  string `json:"found"`
+	Keys   string `json:"keys"`
+	Search string `json:"search"`
+}
+
+const (
+	IN_SEARCH int = iota
+	WAIT_VDOM
+	IN_VDOM
+	IN_POLICIES
+)
 
 type addrGroup struct {
 	subnets  map[string]string
@@ -67,6 +79,32 @@ func search_by_uuid(CState, CLine *C.char) *C.char {
 	} else if f && strings.Contains(state.Search, state.Keys) {
 		state.Found = fmt.Sprintf("%s%s", state.Search, entry)
 	} else {
+		state.Search = fmt.Sprintf("%s%s", state.Search, entry)
+	}
+
+	stateAsGoString, _ := json.Marshal(state)
+	return C.CString(string(stateAsGoString))
+}
+
+//export search_by_v_polid
+func search_by_v_polid(CState, CLine *C.char) *C.char {
+	state := &State{}
+	var entry = strings.ReplaceAll(C.GoString(CLine), "\n", "|")
+
+	json.Unmarshal([]byte(C.GoString(CState)), state)
+
+	fields := strings.Split(state.Keys, ",")
+	vdom, polID := fields[0], fields[1]
+	pattern := fmt.Sprintf(`^\s*edit\s%s[^\d]`, polID)
+	foundPolicy := strings.Contains(state.Search, polID)
+
+	updateFlag(state, vdom, entry)
+
+	if ok, _ := regexp.MatchString(pattern, entry); ok && state.Flag == IN_POLICIES {
+		state.Search = entry
+	} else if ok, _ := regexp.MatchString(`^\s*next`, entry); ok && foundPolicy {
+		state.Found = fmt.Sprintf("%s%s", state.Search, entry)
+	} else if state.Search != "" && state.Flag == IN_POLICIES {
 		state.Search = fmt.Sprintf("%s%s", state.Search, entry)
 	}
 
@@ -193,6 +231,26 @@ func split_field(field string) (string, interface{}) {
 	} else {
 		val, _ := strconv.Atoi(fields[1])
 		return fields[0], val
+	}
+}
+
+func updateFlag(state *State, vdom, entry string) {
+	switch state.Flag {
+	case IN_SEARCH:
+		if ok, _ := regexp.MatchString(`^\s*config global`, entry); ok {
+			state.Flag = WAIT_VDOM
+		}
+	case WAIT_VDOM:
+		pattern := fmt.Sprintf(`^\s*edit\s%s`, vdom)
+		if ok, _ := regexp.MatchString(pattern, entry); ok {
+			state.Flag = IN_VDOM
+		}
+	case IN_VDOM:
+		if ok, _ := regexp.MatchString(`\s*config firewall policy`, entry); ok {
+			state.Flag = IN_POLICIES
+		}
+	case IN_POLICIES:
+		state.Flag = IN_POLICIES
 	}
 }
 
