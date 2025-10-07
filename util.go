@@ -15,13 +15,6 @@ import (
 	"strings"
 )
 
-type State struct {
-	Flag   int    `json:"flag"`
-	Found  string `json:"found"`
-	Keys   string `json:"keys"`
-	Search string `json:"search"`
-}
-
 const (
 	IN_SEARCH int = iota
 	WAIT_VDOM
@@ -29,10 +22,11 @@ const (
 	IN_POLICIES
 )
 
-type addrGroup struct {
-	subnets  map[string]string
-	addrs    []string
-	filename string
+type LookUp struct {
+	Expander string `json:"expander"`
+	Filename string `json:"filename"`
+	Key      string `json:"key"`
+	SearchBy string `json:"search-by"`
 }
 
 type Policy struct {
@@ -48,100 +42,60 @@ type Policy struct {
 	Action   string   `json:"action"`
 }
 
-//export expand_subnet_from_addr_grp
-func expand_subnet_from_addr_grp(CPolicy, expander, CFilename *C.char) *C.char {
-	policy := &Policy{}
-	json.Unmarshal([]byte(C.GoString(CPolicy)), policy)
+type addrGroup struct {
+	subnets  map[string]string
+	addrs    []string
+	filename string
+}
 
-	if C.GoString(expander) == "addr" {
-		group := &addrGroup{filename: C.GoString(CFilename), addrs: policy.SrcAddr}
-		policy.SrcAddr = expand_subnets(group)
-		group.addrs = policy.DstAddr
-		policy.DstAddr = expand_subnets(group)
+type state struct {
+	flag   int    `json:"flag"`
+	found  string `json:"found"`
+	keys   string `json:"keys"`
+	search string `json:"search"`
+}
+
+//export lookup_key
+func lookup_key(CLookUp *C.char) *C.char {
+	policy := &Policy{}
+	lookup := &LookUp{}
+	json.Unmarshal([]byte(C.GoString(CLookUp)), lookup)
+	var searchBy func(*state, string)
+	state := &state{keys: lookup.Key}
+
+	switch lookup.SearchBy {
+	case "UUID":
+		searchBy = searchByUUID
+	case "VDOM-AND-POLID":
+		searchBy = searchByVDOMAndPolID
 	}
 
+	file, err := os.Open(lookup.Filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		searchBy(state, line)
+		if state.found != "" {
+			trimPrefix(&state.found)
+			jsonBody, _ := json.Marshal(trimKeys(state.found))
+			json.Unmarshal(jsonBody, policy)
+			expandSubnetFromAddrGroup(policy, lookup)
+			goto exit
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+exit:
 	jsonStr, _ := json.Marshal(policy)
 	return C.CString(string(jsonStr))
-}
-
-//export search_by_uuid
-func search_by_uuid(CState, CLine *C.char) *C.char {
-	var state State
-	var entry = strings.ReplaceAll(C.GoString(CLine), "\n", "|")
-
-	json.Unmarshal([]byte(C.GoString(CState)), &state)
-
-	s, _ := regexp.MatchString(`^\s*edit\s\d+`, entry)
-	f, _ := regexp.MatchString(`^\s*next`, entry)
-
-	if s {
-		state.Search = entry
-	} else if f && strings.Contains(state.Search, state.Keys) {
-		state.Found = fmt.Sprintf("%s%s", state.Search, entry)
-	} else {
-		state.Search = fmt.Sprintf("%s%s", state.Search, entry)
-	}
-
-	stateAsGoString, _ := json.Marshal(state)
-	return C.CString(string(stateAsGoString))
-}
-
-//export search_by_v_polid
-func search_by_v_polid(CState, CLine *C.char) *C.char {
-	state := &State{}
-	var entry = strings.ReplaceAll(C.GoString(CLine), "\n", "|")
-
-	json.Unmarshal([]byte(C.GoString(CState)), state)
-
-	fields := strings.Split(state.Keys, ",")
-	vdom, polID := fields[0], fields[1]
-	pattern := fmt.Sprintf(`^\s*edit\s%s[^\d]`, polID)
-	foundPolicy := strings.Contains(state.Search, polID)
-
-	updateFlag(state, vdom, entry)
-
-	if ok, _ := regexp.MatchString(pattern, entry); ok && state.Flag == IN_POLICIES {
-		state.Search = entry
-	} else if ok, _ := regexp.MatchString(`^\s*next`, entry); ok && foundPolicy {
-		state.Found = fmt.Sprintf("%s%s", state.Search, entry)
-	} else if state.Search != "" && state.Flag == IN_POLICIES {
-		state.Search = fmt.Sprintf("%s%s", state.Search, entry)
-	}
-
-	stateAsGoString, _ := json.Marshal(state)
-	return C.CString(string(stateAsGoString))
-}
-
-//export trim_keys
-func trim_keys(found *C.char) *C.char {
-	var fields map[string]interface{} = make(map[string]interface{})
-
-	for _, field := range strings.Split(C.GoString(found), "|") {
-		key, val := split_field(field)
-		fields[key] = val
-	}
-
-	jsonStr, _ := json.Marshal(fields)
-
-	return C.CString(string(jsonStr))
-}
-
-//export trim_prfx
-func trim_prfx(found *C.char) *C.char {
-	var output string = C.GoString(found)
-	var keyset map[string]string = map[string]string{
-		`^\s+edit\s`:   "id ",
-		`\|\s+set\s`:   "|",
-		`\|\s+next.*$`: "",
-		`"`:            "",
-	}
-
-	for pattern, replacement := range keyset {
-		re := regexp.MustCompile(pattern)
-		output = re.ReplaceAllString(output, replacement)
-	}
-
-	return C.CString(output)
 }
 
 func add_addr_or_subnet(group *addrGroup) {
@@ -204,7 +158,16 @@ func addSubnet(addr string, group *addrGroup) {
 	group.subnets[subnet] = subnet
 }
 
-func expand_subnets(group *addrGroup) []string {
+func expandSubnetFromAddrGroup(policy *Policy, lookUp *LookUp) {
+	if lookUp.Expander == "addr" {
+		group := &addrGroup{filename: lookUp.Filename, addrs: policy.SrcAddr}
+		policy.SrcAddr = expandSubnets(group)
+		group.addrs = policy.DstAddr
+		policy.DstAddr = expandSubnets(group)
+	}
+}
+
+func expandSubnets(group *addrGroup) []string {
 	group.subnets = make(map[string]string)
 	for len(group.addrs) != 0 {
 		for _ = range len(group.addrs) {
@@ -218,6 +181,40 @@ func expand_subnets(group *addrGroup) []string {
 func getCIDR(mask string) string {
 	length, _ := net.IPMask(net.ParseIP(mask).To4()).Size()
 	return strconv.Itoa(length)
+}
+
+func searchByVDOMAndPolID(state *state, line string) {
+	var entry string = line + "|"
+
+	fields := strings.Split(state.keys, ",")
+	vdom, polID := fields[0], fields[1]
+	pattern := fmt.Sprintf(`^\s*edit\s%s[^\d]`, polID)
+	foundPolicy := strings.Contains(state.search, polID)
+
+	updateFlag(state, vdom, entry)
+
+	if ok, _ := regexp.MatchString(pattern, entry); ok && state.flag == IN_POLICIES {
+		state.search = entry
+	} else if ok, _ := regexp.MatchString(`^\s*next`, entry); ok && foundPolicy {
+		state.found = fmt.Sprintf("%s%s", state.search, entry)
+	} else if state.search != "" && state.flag == IN_POLICIES {
+		state.search = fmt.Sprintf("%s%s", state.search, entry)
+	}
+}
+
+func searchByUUID(state *state, line string) {
+	var entry string = line + "|"
+
+	s, _ := regexp.MatchString(`^\s*edit\s\d+`, entry)
+	f, _ := regexp.MatchString(`^\s*next`, entry)
+
+	if s {
+		state.search = entry
+	} else if f && strings.Contains(state.search, state.keys) {
+		state.found = fmt.Sprintf("%s%s", state.search, entry)
+	} else {
+		state.search = fmt.Sprintf("%s%s", state.search, entry)
+	}
 }
 
 func split_field(field string) (string, interface{}) {
@@ -234,23 +231,48 @@ func split_field(field string) (string, interface{}) {
 	}
 }
 
-func updateFlag(state *State, vdom, entry string) {
-	switch state.Flag {
+func trimKeys(found string) map[string]interface{} {
+	fields := make(map[string]interface{})
+
+	for _, field := range strings.Split(found, "|") {
+		key, val := split_field(field)
+		fields[key] = val
+	}
+
+	return fields
+}
+
+func trimPrefix(found *string) {
+	var keyset map[string]string = map[string]string{
+		`^\s+edit\s`:   "id ",
+		`\|\s+set\s`:   "|",
+		`\|\s+next.*$`: "",
+		`"`:            "",
+	}
+
+	for pattern, replacement := range keyset {
+		re := regexp.MustCompile(pattern)
+		*found = re.ReplaceAllString(*found, replacement)
+	}
+}
+
+func updateFlag(state *state, vdom, entry string) {
+	switch state.flag {
 	case IN_SEARCH:
 		if ok, _ := regexp.MatchString(`^\s*config global`, entry); ok {
-			state.Flag = WAIT_VDOM
+			state.flag = WAIT_VDOM
 		}
 	case WAIT_VDOM:
 		pattern := fmt.Sprintf(`^\s*edit\s%s`, vdom)
 		if ok, _ := regexp.MatchString(pattern, entry); ok {
-			state.Flag = IN_VDOM
+			state.flag = IN_VDOM
 		}
 	case IN_VDOM:
 		if ok, _ := regexp.MatchString(`\s*config firewall policy`, entry); ok {
-			state.Flag = IN_POLICIES
+			state.flag = IN_POLICIES
 		}
 	case IN_POLICIES:
-		state.Flag = IN_POLICIES
+		state.flag = IN_POLICIES
 	}
 }
 

@@ -36,110 +36,58 @@ else:
 # FFI
 cffi = FFI()
 cffi.cdef("""
-char* expand_subnet_from_addr_grp(char* output, char* expander, char* filename);
-char* search_by_uuid(char* state, char* line);
-char* search_by_v_polid(char* state, char* line);
-char* trim_prfx(char* found);
-char* trim_keys(char* found);
+char* lookup_key(char* lookup);
 """)
 dll = cffi.dlopen(os.path.abspath("util.so"))
-
-
-def is_match(_match):
-    return isinstance(_match, re.Match)
 
 
 def pipe(args, *funcs):
     return reduce(lambda arg, func: func(arg), funcs, args)
 
 
-def search_by_uuid(state, line):
-    return json.loads(
-        cffi.string(
-            dll.search_by_uuid(json.dumps(state).encode(), line.encode())
-        ).decode("utf-8")
-    )
-
-
-def search_by_v_polid(state, line):
-    return json.loads(
-        cffi.string(
-            dll.search_by_v_polid(json.dumps(state).encode(), line.encode())
-        ).decode("utf-8")
-    )
-
-
-def trim_keys(found):
-    return json.loads(cffi.string(dll.trim_keys(found.encode())).decode("utf-8"))
-
-
-def trim_prfx(found):
-    return cffi.string(dll.trim_prfx(found.encode())).decode("utf-8")
-
-
 def lookup_key(config_name, key, search_by):
-    init = {"found": "", "search": "", "keys": key, "flag": ""}
-    default = {"found": ""}
-
-    logging.debug(f"Looking up {key}")
-
-    with open(config_name) as config:
-        all_results = it.accumulate(config, search_by(), initial=init)
-        search_result = next(filter(lambda o: o.get("found"), all_results), default)
-
-    return search_result["found"]
-
-
-def expand_subnet_from_addr_grp(output):
     return json.loads(
         cffi.string(
-            dll.expand_subnet_from_addr_grp(
-                json.dumps(output).encode(), args.expand.encode(), args.config.encode()
+            dll.lookup_key(
+                json.dumps(
+                    {
+                        "filename": config_name,
+                        "key": key,
+                        "search-by": search_by,
+                        "expander": args.expand,
+                    }
+                ).encode()
             )
         ).decode("utf-8")
     )
 
 
 def lookup_keys(config_name, _type, key_list, list_sep=":"):
-    def pipe_flow(key):
-        return pipe(
-            lookup_key(config_name, key, search_by),
-            trim_prfx,
-            trim_keys,
-            expand_subnet_from_addr_grp,
-        )
-
-    def search_by():
-        return {"UUID": search_by_uuid, "VDOM-AND-POLID": search_by_v_polid}[_type]
-
     keys = key_list.split(list_sep)
     logging.debug(f"Number of input, {len(keys)}: {keys}")
 
-    return [pipe_flow(key) for key in keys]
+    return [lookup_key(config_name, key, _type) for key in keys]
 
 
 def format_output(entries, formatter, line_sep=";"):
     def dict_to_string(line, item):
         key, value = item
 
-        match key:
-            case "id":
-                return str(value)
-            case "name" | "uuid" | "action" | "logtraffic" | "comments":
-                return f"{line}{line_sep}{value}"
-            case "srcintf" | "dstintf" | "srcaddr" | "dstaddr" | "schedule" | "service":
-                joinedvalues = ",".join(value)
-                return f"{line}{line_sep}{joinedvalues}"
+        if key == "id":
+            return str(value)
+        elif key in {"name", "uuid", "action", "logtraffic", "comments"}:
+            return f"{line}{line_sep}{value}"
+        elif key in {"srcintf", "dstintf", "srcaddr", "dstaddr", "schedule", "service"}:
+            return f"{line}{line_sep}" + ",".join(value)
 
-    match formatter:
-        case "json":
-            return pipe(entries, json.dumps, logging.info)
-        case "csv":
-            rows = [reduce(dict_to_string, entry.items(), "") for entry in entries]
-            head = line_sep.join(entries.pop(0).keys())
-            output = ["sep=" + line_sep] + [head] + rows
+    if formatter == "json":
+        return pipe(entries, json.dumps, logging.info)
+    elif formatter == "csv":
+        rows = [reduce(dict_to_string, entry.items(), "") for entry in entries]
+        head = line_sep.join(entries.pop(0).keys())
+        output = ["sep=" + line_sep] + [head] + rows
 
-            return pipe("\n".join(output), logging.info)
+        return pipe("\n".join(output), logging.info)
 
 
 if __name__ == "__main__":
@@ -150,9 +98,6 @@ if __name__ == "__main__":
         _type = "VDOM-AND-POLID"
         keys = args.v_polid
 
-    pipe(
-        lookup_keys(args.config, _type, keys),
-        lambda output: format_output(output, args.formatter),
-    )
+    format_output(lookup_keys(args.config, _type, keys), args.formatter)
 
     cffi.dlclose(dll)
