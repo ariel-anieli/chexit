@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -23,10 +24,11 @@ const (
 )
 
 type LookUp struct {
-	Expander string `json:"expander"`
-	Filename string `json:"filename"`
-	Key      string `json:"key"`
-	SearchBy string `json:"search-by"`
+	Expander  string `json:"expander"`
+	Filename  string `json:"filename"`
+	Keys      string `json:"keys"`
+	SearchBy  string `json:"search-by"`
+	Formatter string `json:"formatter"`
 }
 
 type Policy struct {
@@ -55,47 +57,17 @@ type state struct {
 	search string `json:"search"`
 }
 
-//export lookup_key
-func lookup_key(CLookUp *C.char) *C.char {
-	policy := &Policy{}
-	lookup := &LookUp{}
-	json.Unmarshal([]byte(C.GoString(CLookUp)), lookup)
-	var searchBy func(*state, string)
-	state := &state{keys: lookup.Key}
+//export lookup_keys
+func lookup_keys(CLookUp *C.char) {
+	var policies []Policy
+	lookUp := &LookUp{}
+	json.Unmarshal([]byte(C.GoString(CLookUp)), lookUp)
 
-	switch lookup.SearchBy {
-	case "UUID":
-		searchBy = searchByUUID
-	case "VDOM-AND-POLID":
-		searchBy = searchByVDOMAndPolID
+	for _, key := range strings.Split(lookUp.Keys, ":") {
+		policies = append(policies, lookupKey(key, lookUp))
 	}
 
-	file, err := os.Open(lookup.Filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		searchBy(state, line)
-		if state.found != "" {
-			trimPrefix(&state.found)
-			jsonBody, _ := json.Marshal(trimKeys(state.found))
-			json.Unmarshal(jsonBody, policy)
-			expandSubnetFromAddrGroup(policy, lookup)
-			goto exit
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-exit:
-	jsonStr, _ := json.Marshal(policy)
-	return C.CString(string(jsonStr))
+	format(policies, lookUp.Formatter)
 }
 
 func add_addr_or_subnet(group *addrGroup) {
@@ -178,9 +150,86 @@ func expandSubnets(group *addrGroup) []string {
 	return slices.Collect(maps.Keys((*group).subnets))
 }
 
+func format(policies []Policy, formatter string) {
+	switch formatter {
+	case "json":
+		jsonStr, _ := json.Marshal(policies)
+		fmt.Println(string(jsonStr))
+	case "csv":
+		for _, policy := range policies {
+			policytoString(policy)
+		}
+	}
+}
+
 func getCIDR(mask string) string {
 	length, _ := net.IPMask(net.ParseIP(mask).To4()).Size()
 	return strconv.Itoa(length)
+}
+
+func lookupKey(key string, lookUp *LookUp) Policy {
+	policy := &Policy{}
+	var searchBy func(*state, string)
+	state := &state{keys: key}
+
+	switch lookUp.SearchBy {
+	case "UUID":
+		searchBy = searchByUUID
+	case "VDOM-AND-POLID":
+		searchBy = searchByVDOMAndPolID
+	}
+
+	file, err := os.Open(lookUp.Filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		searchBy(state, line)
+		if state.found != "" {
+			trimPrefix(&state.found)
+			jsonBody, _ := json.Marshal(trimKeys(state.found))
+			json.Unmarshal(jsonBody, policy)
+			expandSubnetFromAddrGroup(policy, lookUp)
+			goto exit
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+exit:
+	return *policy
+}
+
+func policytoString(policy Policy) {
+	var key, head, rows string
+	sep := ";"
+	values := reflect.ValueOf(policy)
+	typesOf := values.Type()
+
+	for i := 0; i < values.NumField(); i++ {
+		key = strings.ToLower(typesOf.Field(i).Name)
+
+		switch key {
+		case "id":
+			head = fmt.Sprintf("%s", key)
+			rows = fmt.Sprintf("%d", values.Field(i).Interface())
+		case "name", "uuid", "action", "logtraffic", "comments":
+			head = fmt.Sprintf("%s%s%s", head, sep, key)
+			rows = fmt.Sprintf("%s%s%s", rows, sep, values.Field(i).Interface())
+		case "srcintf", "dstintf", "srcaddr", "dstaddr", "schedule", "service":
+			head = fmt.Sprintf("%s%s%s", head, sep, key)
+			values := values.Field(i).Interface().([]string)
+			rows = fmt.Sprintf("%s%s%s", rows, sep, strings.Join(values, ","))
+		}
+	}
+
+	fmt.Printf("sep=%s\n%s\n%s\n", sep, head, rows)
 }
 
 func searchByVDOMAndPolID(state *state, line string) {

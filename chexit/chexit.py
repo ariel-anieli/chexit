@@ -1,13 +1,8 @@
 import argparse
-import logging
-import ipaddress
-import itertools as it
 import json
 import os
-import re
 import sys
 
-from functools import reduce
 from cffi import FFI
 
 parser = argparse.ArgumentParser()
@@ -21,73 +16,23 @@ group.add_argument("-u", "--uuid", help="uuid1[:uuid2...]")
 group.add_argument("-vp", "--v_polid", help="vdom1,polID1[:vdom2,polID2...]")
 args = parser.parse_args()
 
-if args.verbose > 0:
-    FORMAT = "%(levelname)s:%(message)s"
-    LEVEL = logging.DEBUG
-else:
-    FORMAT = "%(message)s"
-    LEVEL = logging.INFO
-
-if args.output == sys.stdout:
-    logging.basicConfig(stream=args.output, format=FORMAT, level=LEVEL)
-else:
-    logging.basicConfig(filename=args.output, filemode="w", format=FORMAT, level=LEVEL)
-
 # FFI
 cffi = FFI()
-cffi.cdef("""
-char* lookup_key(char* lookup);
-""")
-dll = cffi.dlopen(os.path.abspath("util.so"))
-
-
-def pipe(args, *funcs):
-    return reduce(lambda arg, func: func(arg), funcs, args)
-
-
-def lookup_key(config_name, key, search_by):
-    return json.loads(
-        cffi.string(
-            dll.lookup_key(
-                json.dumps(
-                    {
-                        "filename": config_name,
-                        "key": key,
-                        "search-by": search_by,
-                        "expander": args.expand,
-                    }
-                ).encode()
-            )
-        ).decode("utf-8")
-    )
-
+cffi.cdef("void lookup_keys(char* lookup);")
+dll = cffi.dlopen(os.path.abspath("parse.so"))
 
 def lookup_keys(config_name, _type, key_list, list_sep=":"):
-    keys = key_list.split(list_sep)
-    logging.debug(f"Number of input, {len(keys)}: {keys}")
-
-    return [lookup_key(config_name, key, _type) for key in keys]
-
-
-def format_output(entries, formatter, line_sep=";"):
-    def dict_to_string(line, item):
-        key, value = item
-
-        if key == "id":
-            return str(value)
-        elif key in {"name", "uuid", "action", "logtraffic", "comments"}:
-            return f"{line}{line_sep}{value}"
-        elif key in {"srcintf", "dstintf", "srcaddr", "dstaddr", "schedule", "service"}:
-            return f"{line}{line_sep}" + ",".join(value)
-
-    if formatter == "json":
-        return pipe(entries, json.dumps, logging.info)
-    elif formatter == "csv":
-        rows = [reduce(dict_to_string, entry.items(), "") for entry in entries]
-        head = line_sep.join(entries.pop(0).keys())
-        output = ["sep=" + line_sep] + [head] + rows
-
-        return pipe("\n".join(output), logging.info)
+    return dll.lookup_keys(
+        json.dumps(
+            {
+                "filename": config_name,
+                "keys": key_list,
+                "search-by": _type,
+                "expander": args.expand,
+                "formatter": args.formatter,
+            }
+        ).encode()
+    )
 
 
 if __name__ == "__main__":
@@ -98,6 +43,6 @@ if __name__ == "__main__":
         _type = "VDOM-AND-POLID"
         keys = args.v_polid
 
-    format_output(lookup_keys(args.config, _type, keys), args.formatter)
+    lookup_keys(args.config, _type, keys)
 
     cffi.dlclose(dll)
