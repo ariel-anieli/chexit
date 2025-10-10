@@ -4,6 +4,7 @@ import (
 	"C"
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"maps"
@@ -23,12 +24,19 @@ const (
 	IN_POLICIES
 )
 
+const (
+	UUID int = iota
+	VDOM_AND_POLID
+)
+
 type LookUp struct {
-	Expander  string `json:"expander"`
-	Filename  string `json:"filename"`
-	Keys      string `json:"keys"`
-	SearchBy  string `json:"search-by"`
-	Formatter string `json:"formatter"`
+	Expander     string
+	Filename     string
+	Keys         string
+	Formatter    string
+	UUID, vPolID string
+	Verbose      int
+	SearchBy     int
 }
 
 type Policy struct {
@@ -57,20 +65,52 @@ type state struct {
 	search string `json:"search"`
 }
 
-//export lookup_keys
-func lookup_keys(CLookUp *C.char) {
+func main() {
+	lookup := parseArgs()
+
+	if errors := checkArgs(lookup); len(errors) > 0 {
+		log.Printf("Invalid arguments: %s\n", strings.Join(errors, ", "))
+		os.Exit(1)
+	}
+
+	if lookup.UUID != "" {
+		lookup.SearchBy = UUID
+		lookup.Keys = lookup.UUID
+	} else if lookup.vPolID != "" {
+		lookup.SearchBy = VDOM_AND_POLID
+		lookup.Keys = lookup.vPolID
+	}
+
+	fmt.Println(Format(LookUpKeys(&lookup), lookup.Formatter))
+}
+
+func Format(policies []Policy, formatter string) string {
+	var formatted string
+
+	switch formatter {
+	case "json":
+		jsonStr, _ := json.Marshal(policies)
+		formatted = string(jsonStr)
+	case "csv":
+		for _, policy := range policies {
+			formatted = fmt.Sprintf("%s%s", formatted, policytoString(policy))
+		}
+	}
+
+	return formatted
+}
+
+func LookUpKeys(lookUp *LookUp) []Policy {
 	var policies []Policy
-	lookUp := &LookUp{}
-	json.Unmarshal([]byte(C.GoString(CLookUp)), lookUp)
 
 	for _, key := range strings.Split(lookUp.Keys, ":") {
 		policies = append(policies, lookupKey(key, lookUp))
 	}
 
-	format(policies, lookUp.Formatter)
+	return policies
 }
 
-func add_addr_or_subnet(group *addrGroup) {
+func addAddrOrSubnet(group *addrGroup) {
 	const (
 		IN_GRP int = iota
 		IN_ADDR
@@ -130,6 +170,23 @@ func addSubnet(addr string, group *addrGroup) {
 	group.subnets[subnet] = subnet
 }
 
+func checkArgs(lookup LookUp) []string {
+	var errors []string
+	conditions := map[string]bool{
+		"no filename":                    lookup.Filename == "",
+		"both UUID & VDOM/Policy ID set": lookup.UUID != "" && lookup.vPolID != "",
+		"UUID or VDOM/Policy ID not set": lookup.UUID == "" && lookup.vPolID == "",
+	}
+
+	for msg, condition := range conditions {
+		if condition {
+			errors = append(errors, msg)
+		}
+	}
+
+	return errors
+}
+
 func expandSubnetFromAddrGroup(policy *Policy, lookUp *LookUp) {
 	if lookUp.Expander == "addr" {
 		group := &addrGroup{filename: lookUp.Filename, addrs: policy.SrcAddr}
@@ -143,23 +200,11 @@ func expandSubnets(group *addrGroup) []string {
 	group.subnets = make(map[string]string)
 	for len(group.addrs) != 0 {
 		for _ = range len(group.addrs) {
-			add_addr_or_subnet(group)
+			addAddrOrSubnet(group)
 		}
 	}
 
 	return slices.Collect(maps.Keys((*group).subnets))
-}
-
-func format(policies []Policy, formatter string) {
-	switch formatter {
-	case "json":
-		jsonStr, _ := json.Marshal(policies)
-		fmt.Println(string(jsonStr))
-	case "csv":
-		for _, policy := range policies {
-			policytoString(policy)
-		}
-	}
 }
 
 func getCIDR(mask string) string {
@@ -173,9 +218,9 @@ func lookupKey(key string, lookUp *LookUp) Policy {
 	state := &state{keys: key}
 
 	switch lookUp.SearchBy {
-	case "UUID":
+	case UUID:
 		searchBy = searchByUUID
-	case "VDOM-AND-POLID":
+	case VDOM_AND_POLID:
 		searchBy = searchByVDOMAndPolID
 	}
 
@@ -206,7 +251,22 @@ exit:
 	return *policy
 }
 
-func policytoString(policy Policy) {
+func parseArgs() LookUp {
+	var lookup LookUp
+
+	flag.StringVar(&lookup.Filename, "config", "", "Configuration file name")
+	flag.IntVar(&lookup.Verbose, "verbose", 0, "Verbosity")
+	flag.StringVar(&lookup.Expander, "expand", "addr", "Expand (none, addr)")
+	flag.StringVar(&lookup.Formatter, "formatter", "json", "Output format (json, csv)")
+	flag.StringVar(&lookup.UUID, "uuid", "", "uuid1[:uuid2...]")
+	flag.StringVar(&lookup.vPolID, "v_polid", "", "vdom1,polID1[:vdom2,polID2...]")
+
+	flag.Parse()
+
+	return lookup
+}
+
+func policytoString(policy Policy) string {
 	var key, head, rows string
 	sep := ";"
 	values := reflect.ValueOf(policy)
@@ -229,7 +289,7 @@ func policytoString(policy Policy) {
 		}
 	}
 
-	fmt.Printf("sep=%s\n%s\n%s\n", sep, head, rows)
+	return fmt.Sprintf("sep=%s\n%s\n%s", sep, head, rows)
 }
 
 func searchByVDOMAndPolID(state *state, line string) {
@@ -323,7 +383,4 @@ func updateFlag(state *state, vdom, entry string) {
 	case IN_POLICIES:
 		state.flag = IN_POLICIES
 	}
-}
-
-func main() {
 }

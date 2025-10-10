@@ -3,7 +3,7 @@ Using a FortiGate configuration, checks a policy, and exits it in JSON or CSV.
 
 ## Either by VDOM and policy ID, spaced by columns
 ```
-python chexit/chexit.py -c CONFIGURATION -vp VDOM_1,POLID_1[:VDOM_2,POLID_2] -f json | jq --slurp '.[0] | map_values(type)'
+go run chexit.go --config CONFIGURATION --v_polid VDOM_1,POLID_1[:VDOM_2,POLID_2] --formatter json | jq --slurp '.[0] | map_values(type)'
 {
   "id": "number",
   "uuid": "string",
@@ -21,7 +21,7 @@ python chexit/chexit.py -c CONFIGURATION -vp VDOM_1,POLID_1[:VDOM_2,POLID_2] -f 
 
 ## Or by policy UUID, spaced by columns
 ```
-python chexit/chexit.py -c CONFIGURATION -u UUID_1[:UUID_2] | jq --slurp '.[0] | map_values(type)'
+go run chexit.go --config CONFIGURATION --uuid UUID_1[:UUID_2] | jq --slurp '.[0] | map_values(type)'
 {
   "id": "number",
   "uuid": "string",
