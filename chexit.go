@@ -64,42 +64,13 @@ type state struct {
 	search string
 }
 
-const (
-	CLOSE int = iota
-	INFO
-	DEBUG
-	ERROR
-)
-
-type Message struct {
-	title int
-	body  string
-}
-
-func Logger(log <-chan Message, verbose int) {
-	toStr := []string{INFO: "INFO", DEBUG: "DEBUG", ERROR: "ERROR"}
-
-	for msg := range log {
-		if msg.title == CLOSE {
-			return
-		}
-
-		if verbose > 0 {
-			fmt.Printf("%s: %s\n", toStr[msg.title], msg.body)
-		} else if msg.title == INFO || msg.title == ERROR {
-			fmt.Printf("%s\n", msg.body)
-		}
-	}
-}
-
 func main() {
 	config := parseArgs()
-	log := make(chan Message)
-	go Logger(log, config.Verbose)
+	_logger := startLogger(config.Verbose)
 
 	if errors := checkArgs(config); errors != "" {
-		log <- Message{ERROR, fmt.Sprintf("Invalid arguments: %s\n", errors)}
-		log <- Message{}
+		_logger.error(fmt.Sprintf("Invalid arguments: %s\n", errors))
+		stopLogger(_logger)
 		os.Exit(1)
 	}
 
@@ -111,8 +82,8 @@ func main() {
 		config.Keys = config.vPolID
 	}
 
-	log <- Message{INFO, Format(LookUpKeys(log, &config), config.Formatter)}
-	log <- Message{}
+	_logger.info(Format(LookUpKeys(_logger, &config), config.Formatter))
+	stopLogger(_logger)
 }
 
 func Format(policies []Policy, formatter string) string {
@@ -131,17 +102,17 @@ func Format(policies []Policy, formatter string) string {
 	return formatted
 }
 
-func LookUpKeys(log chan<- Message, config *Config) []Policy {
+func LookUpKeys(_logger *logger, config *Config) []Policy {
 	var policies []Policy
 
 	for _, key := range strings.Split(config.Keys, ":") {
-		policies = append(policies, lookupKey(log, key, config))
+		policies = append(policies, lookupKey(_logger, key, config))
 	}
 
 	return policies
 }
 
-func addAddrOrSubnet(log chan<- Message, group *addrGroup) {
+func addAddrOrSubnet(_logger *logger, group *addrGroup) {
 	const (
 		IN_GRP int = iota
 		IN_ADDR
@@ -156,7 +127,7 @@ func addAddrOrSubnet(log chan<- Message, group *addrGroup) {
 
 	file, err := os.Open(group.filename)
 	if err != nil {
-		log <- Message{ERROR, err.Error()}
+		_logger.error(err.Error())
 		os.Exit(1)
 	}
 	defer file.Close()
@@ -164,7 +135,7 @@ func addAddrOrSubnet(log chan<- Message, group *addrGroup) {
 
 	if key == "all" {
 		group.subnets["all"] = "all"
-		log <- Message{DEBUG, fmt.Sprintf("Found subnet all")}
+		_logger.debug(fmt.Sprintf("Found subnet all"))
 		return
 	}
 
@@ -182,13 +153,13 @@ func addAddrOrSubnet(log chan<- Message, group *addrGroup) {
 			} else if addr[1] == "member" {
 				addAddrs(addr[2], group)
 			}
-			log <- Message{DEBUG, fmt.Sprintf("%s: %s", key, addr[2])}
+			_logger.debug(fmt.Sprintf("%s: %s", key, addr[2]))
 			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		log <- Message{ERROR, err.Error()}
+		_logger.error(err.Error())
 		os.Exit(1)
 	}
 }
@@ -222,11 +193,11 @@ func checkArgs(config Config) string {
 	return strings.Join(errors, ", ")
 }
 
-func expandSubnets(log chan<- Message, group *addrGroup) []string {
+func expandSubnets(_logger *logger, group *addrGroup) []string {
 	group.subnets = make(map[string]string)
 	for len(group.addrs) != 0 {
 		for _ = range len(group.addrs) {
-			addAddrOrSubnet(log, group)
+			addAddrOrSubnet(_logger, group)
 		}
 	}
 
@@ -238,12 +209,12 @@ func getCIDR(mask string) string {
 	return strconv.Itoa(length)
 }
 
-func lookupKey(log chan<- Message, key string, config *Config) Policy {
+func lookupKey(_logger *logger, key string, config *Config) Policy {
 	policy := &Policy{}
-	var searchBy func(chan<- Message, *state, string)
+	var searchBy func(*logger, *state, string)
 	state := &state{keys: key}
 
-	log <- Message{DEBUG, fmt.Sprintf("Looking up %s", key)}
+	_logger.debug(fmt.Sprintf("Looking up %s", key))
 
 	switch config.SearchBy {
 	case UUID:
@@ -254,7 +225,7 @@ func lookupKey(log chan<- Message, key string, config *Config) Policy {
 
 	file, err := os.Open(config.Filename)
 	if err != nil {
-		log <- Message{ERROR, err.Error()}
+		_logger.error(err.Error())
 		os.Exit(1)
 	}
 	defer file.Close()
@@ -262,7 +233,7 @@ func lookupKey(log chan<- Message, key string, config *Config) Policy {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		searchBy(log, state, line)
+		searchBy(_logger, state, line)
 		if state.found != "" {
 			trimPrefix(&state.found)
 			jsonBody, _ := json.Marshal(trimKeys(state.found))
@@ -272,18 +243,18 @@ func lookupKey(log chan<- Message, key string, config *Config) Policy {
 	}
 
 	if err := scanner.Err(); err != nil {
-		log <- Message{ERROR, err.Error()}
+		_logger.error(err.Error())
 		os.Exit(1)
 	}
 
 	if config.Expander == "addr" {
-		log <- Message{DEBUG, "Subnet expansion"}
+		_logger.debug("Subnet expansion")
 		group := &addrGroup{filename: config.Filename, addrs: policy.SrcAddr}
-		policy.SrcAddr = expandSubnets(log, group)
+		policy.SrcAddr = expandSubnets(_logger, group)
 		group.addrs = policy.DstAddr
-		policy.DstAddr = expandSubnets(log, group)
+		policy.DstAddr = expandSubnets(_logger, group)
 	} else if config.Expander == "none" {
-		log <- Message{DEBUG, "No subnet expansion"}
+		_logger.debug("No subnet expansion")
 	}
 
 	return *policy
@@ -330,7 +301,7 @@ func policytoString(policy Policy) string {
 	return fmt.Sprintf("sep=%s\n%s\n%s", sep, head, rows)
 }
 
-func searchByVDOMAndPolID(log chan<- Message, state *state, line string) {
+func searchByVDOMAndPolID(_logger *logger, state *state, line string) {
 	var entry string = line + "|"
 
 	fields := strings.Split(state.keys, ",")
@@ -344,13 +315,13 @@ func searchByVDOMAndPolID(log chan<- Message, state *state, line string) {
 		state.search = entry
 	} else if ok, _ := regexp.MatchString(`^\s*next`, entry); ok && foundPolicy {
 		state.found = fmt.Sprintf("%s%s", state.search, entry)
-		log <- Message{DEBUG, fmt.Sprintf("Found ID %s in VDOM %s", polID, vdom)}
+		_logger.debug(fmt.Sprintf("Found ID %s in VDOM %s", polID, vdom))
 	} else if state.search != "" && state.flag == IN_POLICIES {
 		state.search = fmt.Sprintf("%s%s", state.search, entry)
 	}
 }
 
-func searchByUUID(log chan<- Message, state *state, line string) {
+func searchByUUID(_logger *logger, state *state, line string) {
 	var entry string = line + "|"
 
 	s, _ := regexp.MatchString(`^\s*edit\s\d+`, entry)
@@ -360,7 +331,7 @@ func searchByUUID(log chan<- Message, state *state, line string) {
 		state.search = entry
 	} else if f && strings.Contains(state.search, state.keys) {
 		state.found = fmt.Sprintf("%s%s", state.search, entry)
-		log <- Message{DEBUG, fmt.Sprintf("Found %s", state.keys)}
+		_logger.debug(fmt.Sprintf("Found %s", state.keys))
 	} else {
 		state.search = fmt.Sprintf("%s%s", state.search, entry)
 	}
