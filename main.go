@@ -104,9 +104,58 @@ func Format(policies []Policy, formatter string) string {
 
 func LookUpKeys(_logger *logger, config *Config) []Policy {
 	var policies []Policy
+	var searchBy func(*logger, *state, string)
+	var scanner *bufio.Scanner
+	var policy Policy
+	var state *state = &state{}
+
+	switch config.SearchBy {
+	case UUID:
+		searchBy = searchByUUID
+	case VDOM_AND_POLID:
+		searchBy = searchByVDOMAndPolID
+	}
 
 	for _, key := range strings.Split(config.Keys, ":") {
-		policies = append(policies, lookupKey(_logger, key, config))
+		state.keys = key
+
+		file, err := os.Open(config.Filename)
+		if err != nil {
+			_logger.error(err.Error())
+			os.Exit(1)
+		}
+
+		scanner = bufio.NewScanner(file)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			searchBy(_logger, state, line)
+			if state.found != "" {
+				trimPrefix(&state.found)
+				jsonBody, _ := json.Marshal(trimKeys(state.found))
+				json.Unmarshal(jsonBody, &policy)
+				break
+			}
+
+		}
+
+		if config.Expander == "addr" {
+			_logger.debug("Subnet expansion")
+			group := &addrGroup{filename: config.Filename, addrs: policy.SrcAddr}
+			policy.SrcAddr = expandSubnets(_logger, group)
+			group.addrs = policy.DstAddr
+			policy.DstAddr = expandSubnets(_logger, group)
+		} else if config.Expander == "none" {
+			_logger.debug("No subnet expansion")
+		}
+
+		policies = append(policies, policy)
+		file.Close()
+	}
+
+	if err := scanner.Err(); err != nil {
+		_logger.error(err.Error())
+		os.Exit(1)
 	}
 
 	return policies
@@ -207,57 +256,6 @@ func expandSubnets(_logger *logger, group *addrGroup) []string {
 func getCIDR(mask string) string {
 	length, _ := net.IPMask(net.ParseIP(mask).To4()).Size()
 	return strconv.Itoa(length)
-}
-
-func lookupKey(_logger *logger, key string, config *Config) Policy {
-	policy := &Policy{}
-	var searchBy func(*logger, *state, string)
-	state := &state{keys: key}
-
-	_logger.debug(fmt.Sprintf("Looking up %s", key))
-
-	switch config.SearchBy {
-	case UUID:
-		searchBy = searchByUUID
-	case VDOM_AND_POLID:
-		searchBy = searchByVDOMAndPolID
-	}
-
-	file, err := os.Open(config.Filename)
-	if err != nil {
-		_logger.error(err.Error())
-		os.Exit(1)
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		searchBy(_logger, state, line)
-		if state.found != "" {
-			trimPrefix(&state.found)
-			jsonBody, _ := json.Marshal(trimKeys(state.found))
-			json.Unmarshal(jsonBody, policy)
-			break
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		_logger.error(err.Error())
-		os.Exit(1)
-	}
-
-	if config.Expander == "addr" {
-		_logger.debug("Subnet expansion")
-		group := &addrGroup{filename: config.Filename, addrs: policy.SrcAddr}
-		policy.SrcAddr = expandSubnets(_logger, group)
-		group.addrs = policy.DstAddr
-		policy.DstAddr = expandSubnets(_logger, group)
-	} else if config.Expander == "none" {
-		_logger.debug("No subnet expansion")
-	}
-
-	return *policy
 }
 
 func parseArgs() Config {
