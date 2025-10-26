@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -102,55 +103,77 @@ func Format(policies []Policy, formatter string) string {
 	return formatted
 }
 
-func LookUpKeys(_logger *logger, config *Config) []Policy {
-	var policies []Policy
-	var searchBy func(*logger, *state, string)
-	var scanner *bufio.Scanner
-	var policy Policy
-	var state *state = &state{}
+type message struct {
+	id     string
+	status workerState
+	policy Policy
+}
 
-	switch config.SearchBy {
-	case UUID:
-		searchBy = searchByUUID
-	case VDOM_AND_POLID:
-		searchBy = searchByVDOMAndPolID
+type workerState int
+
+const (
+	_ workerState = iota
+	WORK
+	DONE
+)
+
+func LookUpKeys(_logger *logger, config *Config) []Policy {
+	var (
+		policies      []Policy
+		policyCh      (chan message)
+		searchBy      func(*logger, string, chan string, chan message)
+		lines, worker sync.Map
+		done          bool
+	)
+
+	searchBy = searchByUUID
+
+	file, err := os.Open(config.Filename)
+	if err != nil {
+		_logger.error(err.Error())
+		os.Exit(1)
 	}
+	defer file.Close()
 
 	for _, key := range strings.Split(config.Keys, ":") {
-		state.keys = key
+		worker.Store(key, WORK)
+		ch := make(chan string)
+		lines.Store(key, ch)
 
-		file, err := os.Open(config.Filename)
-		if err != nil {
-			_logger.error(err.Error())
-			os.Exit(1)
-		}
+		go searchBy(_logger, key, ch, policyCh)
+	}
 
-		scanner = bufio.NewScanner(file)
-
-		for scanner.Scan() {
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		select {
+		default:
 			line := scanner.Text()
-			searchBy(_logger, state, line)
-			if state.found != "" {
-				trimPrefix(&state.found)
-				jsonBody, _ := json.Marshal(trimKeys(state.found))
-				json.Unmarshal(jsonBody, &policy)
-				break
+			for _, key := range strings.Split(config.Keys, ":") {
+				if state, _ := worker.Load(key); state == WORK {
+					ch, _ := lines.Load(key)
+					ch.(chan string) <- line
+					_logger.debug(fmt.Sprintf("%+v to wk", line))
+				}
+			}
+		case msg := <-policyCh:
+			policies = append(policies, msg.policy)
+
+			worker.Swap(msg.id, msg.status)
+			ch, _ := lines.Load(msg.id)
+			close(ch.(chan string))
+
+			done = true
+			for _, key := range strings.Split(config.Keys, ":") {
+				if state, _ := worker.Load(key); state == WORK {
+					done = false
+					break
+				}
 			}
 
+			if done {
+				break
+			}
 		}
-
-		if config.Expander == "addr" {
-			_logger.debug("Subnet expansion")
-			group := &addrGroup{filename: config.Filename, addrs: policy.SrcAddr}
-			policy.SrcAddr = expandSubnets(_logger, group)
-			group.addrs = policy.DstAddr
-			policy.DstAddr = expandSubnets(_logger, group)
-		} else if config.Expander == "none" {
-			_logger.debug("No subnet expansion")
-		}
-
-		policies = append(policies, policy)
-		file.Close()
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -319,20 +342,38 @@ func searchByVDOMAndPolID(_logger *logger, state *state, line string) {
 	}
 }
 
-func searchByUUID(_logger *logger, state *state, line string) {
-	var entry string = line + "|"
+func searchByUUID(_logger *logger, key string, lines chan string, policyCh chan message) {
+	var (
+		policy Policy
+		state  state = state{keys: key}
+		entry  string
+	)
 
-	s, _ := regexp.MatchString(`^\s*edit\s\d+`, entry)
-	f, _ := regexp.MatchString(`^\s*next`, entry)
+	for line := range lines {
+		entry = line + "|"
 
-	if s {
-		state.search = entry
-	} else if f && strings.Contains(state.search, state.keys) {
-		state.found = fmt.Sprintf("%s%s", state.search, entry)
-		_logger.debug(fmt.Sprintf("Found %s", state.keys))
-	} else {
-		state.search = fmt.Sprintf("%s%s", state.search, entry)
+		s, _ := regexp.MatchString(`^\s*edit\s\d+`, entry)
+		f, _ := regexp.MatchString(`^\s*next`, entry)
+
+		if s {
+			state.search = entry
+		} else if f && strings.Contains(state.search, state.keys) {
+			state.found = fmt.Sprintf("%s%s", state.search, entry)
+			_logger.debug(fmt.Sprintf("Found %s", state.keys))
+		} else {
+			state.search = fmt.Sprintf("%s%s", state.search, entry)
+		}
+
+		if state.found != "" {
+			trimPrefix(&state.found)
+			jsonBody, _ := json.Marshal(trimKeys(state.found))
+			json.Unmarshal(jsonBody, &policy)
+			break
+		}
 	}
+
+	_logger.debug(fmt.Sprintf("policy %+v in worker %+v\n", policy, key))
+	policyCh <- message{id: key, status: DONE, policy: policy}
 }
 
 func splitField(field string) (string, interface{}) {
