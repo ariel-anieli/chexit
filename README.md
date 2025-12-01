@@ -1,4 +1,4 @@
-# chexit
+# 
 Using a FortiGate configuration, checks a policy, and exits it in JSON or CSV.
 
 ## Either by VDOM and policy ID, spaced by columns
