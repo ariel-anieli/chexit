@@ -1,7 +1,7 @@
 # 
 Using a FortiGate configuration, checks a policy, and exits it in JSON or CSV.
 
-## Either by VDOM and policy ID, spaced by columns
+## Either by VDOM and policy ID, spaced by columns guaganco
 ```
 go run . --config CONFIGURATION --v_polid VDOM_1,POLID_1[:VDOM_2,POLID_2] --formatter json | jq --slurp '.[0] | map_values(type)'
 {
